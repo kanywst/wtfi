@@ -1,0 +1,22 @@
+linters:
+  enable:
+    - gofmt
+    - govet
+    - errcheck
+    - staticcheck
+    - revive
+    - unused
+    - gocritic
+    - misspell
+    - prealloc
+    - unparam
+
+run:
+  timeout: 5m
+  # Set the concurrency to avoid OOM in CI if needed
+  concurrency: 4
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
