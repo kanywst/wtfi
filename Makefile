@@ -3,10 +3,10 @@
 BINARY_NAME=wtfi
 
 build:
-	go build -o $(BINARY_NAME) cmd/wtfi/main.go
+	go build -o $(BINARY_NAME) ./cmd/wtfi
 
 run:
-	go run cmd/wtfi/main.go
+	go run ./cmd/wtfi
 
 fmt:
 	go fmt ./...

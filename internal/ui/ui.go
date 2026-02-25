@@ -1,7 +1,9 @@
+// Package ui provides terminal user interface logic for network diagnostics.
 package ui
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -10,25 +12,34 @@ import (
 	"github.com/fatih/color"
 )
 
+// PrintHeader prints the diagnostic start header.
 func PrintHeader() {
-	color.New(color.Bold, color.FgCyan).Println("🚀 wtfi: Starting Network Diagnostics...")
+	if _, err := color.New(color.Bold, color.FgCyan).Println("🚀 wtfi: Starting Network Diagnostics..."); err != nil {
+		log.Printf("UI Error: %v", err)
+	}
 	fmt.Println(strings.Repeat("-", 50))
 }
 
+// PrintFooter prints the diagnostic end footer.
 func PrintFooter() {
 	fmt.Println(strings.Repeat("-", 50))
 }
 
+// ClearScreen clears the terminal screen using ANSI escape codes.
 func ClearScreen() {
 	fmt.Print("\033[H\033[2J")
 }
 
+// PrintResult displays the diagnostic outcome of a single step.
 func PrintResult(r diagnostic.Result, verbose bool) {
 	c := color.New(color.FgGreen)
-	if r.Status == diagnostic.StatusWarning {
+	switch r.Status {
+	case diagnostic.StatusWarning:
 		c = color.New(color.FgYellow)
-	} else if r.Status == diagnostic.StatusError {
+	case diagnostic.StatusError:
 		c = color.New(color.FgRed)
+	case diagnostic.StatusOk:
+		// Default green
 	}
 
 	fmt.Printf("%s %-25s", r.Emoji, r.Name)
@@ -39,23 +50,33 @@ func PrintResult(r diagnostic.Result, verbose bool) {
 		} else {
 			latencyStr = "OK"
 		}
-		c.Printf("%22s\n", latencyStr)
+		if _, err := c.Printf("%22s\n", latencyStr); err != nil {
+			log.Printf("UI Error: %v", err)
+		}
 	} else {
-		c.Printf("%22s\n", "ERROR")
+		if _, err := c.Printf("%22s\n", "ERROR"); err != nil {
+			log.Printf("UI Error: %v", err)
+		}
 	}
 
 	if r.Message != "" {
 		msgColor := color.New(color.FgWhite).Add(color.Faint)
-		msgColor.Printf("   ├─ Info: %s\n", r.Message)
+		if _, err := msgColor.Printf("   ├─ Info: %s\n", r.Message); err != nil {
+			log.Printf("UI Error: %v", err)
+		}
 	}
 
 	if verbose && len(r.Details) > 0 {
 		for _, detail := range r.Details {
-			color.New(color.FgHiBlack).Printf("   │  %s\n", detail)
+			if _, err := color.New(color.FgHiBlack).Printf("   │  %s\n", detail); err != nil {
+				log.Printf("UI Error: %v", err)
+			}
 		}
 	}
 
 	if r.Status != diagnostic.StatusOk && r.Fix != "" {
-		color.New(color.FgHiBlue).Printf("   └─ Fix:  %s\n", r.Fix)
+		if _, err := color.New(color.FgHiBlue).Printf("   └─ Fix:  %s\n", r.Fix); err != nil {
+			log.Printf("UI Error: %v", err)
+		}
 	}
 }

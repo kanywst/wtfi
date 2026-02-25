@@ -1,9 +1,11 @@
+// Package diagnostic provides network diagnostic logic for macOS.
 package diagnostic
 
 import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os/exec"
@@ -14,14 +16,19 @@ import (
 	"time"
 )
 
+// Status represents the health status of a diagnostic step.
 type Status int
 
 const (
+	// StatusOk indicates a healthy state.
 	StatusOk Status = iota
+	// StatusWarning indicates a slow or weak state.
 	StatusWarning
+	// StatusError indicates a failure state.
 	StatusError
 )
 
+// Result holds the outcome of a diagnostic check.
 type Result struct {
 	Name    string
 	Latency time.Duration
@@ -32,6 +39,7 @@ type Result struct {
 	Details []string
 }
 
+// CheckL2WiFi performs Layer 2 (Wi-Fi) diagnostics.
 func CheckL2WiFi(verbose bool) Result {
 	iface, err := getPrimaryInterface()
 	if err != nil {
@@ -41,17 +49,19 @@ func CheckL2WiFi(verbose bool) Result {
 	cmd := exec.Command("system_profiler", "SPAirPortDataType")
 	out, err := cmd.Output()
 
-	res := Result{Name: "Wi-Fi", Emoji: "📡", Status: StatusOk}
 	if err != nil {
-		res.Status = StatusError
-		res.Message = "Failed to retrieve Wi-Fi telemetry"
-		return res
+		return Result{Name: "Wi-Fi", Emoji: "📡", Status: StatusError, Message: "Failed to retrieve Wi-Fi telemetry"}
 	}
 
+	return parseWiFiInfo(string(out), iface, verbose)
+}
+
+func parseWiFiInfo(output string, iface string, verbose bool) Result {
+	res := Result{Name: "Wi-Fi", Emoji: "📡", Status: StatusOk}
 	ssid, rssi := "", 0
 	var details []string
 
-	lines := strings.Split(string(out), "\n")
+	lines := strings.Split(output, "\n")
 	isCurrent := false
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -89,6 +99,7 @@ func CheckL2WiFi(verbose bool) Result {
 	return res
 }
 
+// CheckL3Gateway performs Layer 3 diagnostics for the local gateway.
 func CheckL3Gateway(verbose bool) Result {
 	gw, err := getGatewayIP()
 	if err != nil {
@@ -121,7 +132,8 @@ func CheckL3Gateway(verbose bool) Result {
 	return res
 }
 
-func CheckDNSBenchmark(verbose bool) Result {
+// CheckDNSBenchmark compares performance across multiple DNS resolvers.
+func CheckDNSBenchmark() Result {
 	resolvers := map[string]string{
 		"System":     "",
 		"Google":     "8.8.8.8:53",
@@ -139,9 +151,9 @@ func CheckDNSBenchmark(verbose bool) Result {
 		} else {
 			r := &net.Resolver{
 				PreferGo: true,
-				Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+				Dial: func(ctx context.Context, _, address string) (net.Conn, error) {
 					d := net.Dialer{Timeout: 2 * time.Second}
-					return d.DialContext(ctx, "udp", addr)
+					return d.DialContext(ctx, "udp", address)
 				},
 			}
 			_, err = r.LookupIP(context.Background(), "ip", "google.com")
@@ -168,6 +180,7 @@ func CheckDNSBenchmark(verbose bool) Result {
 	return res
 }
 
+// CheckPrivateRelay detects the state of Apple's iCloud Private Relay.
 func CheckPrivateRelay(verbose bool) Result {
 	start := time.Now()
 	ips, err := net.LookupIP("mask.icloud.com")
@@ -187,6 +200,7 @@ func CheckPrivateRelay(verbose bool) Result {
 	return res
 }
 
+// FastTraceroute performs a concurrent traceroute to visualize the network path.
 func FastTraceroute(verbose bool) Result {
 	target := "1.1.1.1"
 	res := Result{Name: "Fast Trace", Emoji: "📍", Status: StatusOk}
@@ -223,6 +237,7 @@ func FastTraceroute(verbose bool) Result {
 	return res
 }
 
+// CheckCaptivePortal verifies if the user is behind a captive portal.
 func CheckCaptivePortal(verbose bool) Result {
 	start := time.Now()
 	client := http.Client{Timeout: 3 * time.Second}
@@ -230,7 +245,11 @@ func CheckCaptivePortal(verbose bool) Result {
 	if err != nil {
 		return Result{Name: "Captive Portal", Emoji: "🍎", Status: StatusError, Message: "HTTP health check failed"}
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if errClose := resp.Body.Close(); errClose != nil {
+			log.Printf("Network Error: Failed to close response body: %v", errClose)
+		}
+	}()
 	dur := time.Since(start)
 
 	res := Result{Name: "Captive Portal", Emoji: "🍎", Latency: dur, Status: StatusOk}
@@ -256,8 +275,12 @@ func getPrimaryInterface() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return parseInterface(string(out))
+}
+
+func parseInterface(output string) (string, error) {
 	re := regexp.MustCompile(`interface: (\w+)`)
-	m := re.FindStringSubmatch(string(out))
+	m := re.FindStringSubmatch(output)
 	if len(m) > 1 {
 		return m[1], nil
 	}
@@ -269,8 +292,12 @@ func getGatewayIP() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return parseGateway(string(out))
+}
+
+func parseGateway(output string) (string, error) {
 	re := regexp.MustCompile(`gateway: (\d+\.\d+\.\d+\.\d+)`)
-	m := re.FindStringSubmatch(string(out))
+	m := re.FindStringSubmatch(output)
 	if len(m) > 1 {
 		return m[1], nil
 	}
@@ -285,8 +312,12 @@ func ping(ip string) (time.Duration, error) {
 	if err != nil {
 		return 0, err
 	}
+	return parsePing(string(out))
+}
+
+func parsePing(output string) (time.Duration, error) {
 	re := regexp.MustCompile(`min/avg/max/stddev = [\d\.]+/([\d\.]+)`)
-	m := re.FindStringSubmatch(string(out))
+	m := re.FindStringSubmatch(output)
 	if len(m) > 1 {
 		avg, _ := strconv.ParseFloat(m[1], 64)
 		return time.Duration(avg * float64(time.Millisecond)), nil
@@ -294,7 +325,8 @@ func ping(ip string) (time.Duration, error) {
 	return 0, fmt.Errorf("failed to parse ping metrics")
 }
 
-func CheckL3WAN(verbose bool) Result {
+// CheckL3WAN verifies WAN backbone reachability.
+func CheckL3WAN() Result {
 	target := "1.1.1.1"
 	lat, err := ping(target)
 	if err != nil {
