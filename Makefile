@@ -2,10 +2,10 @@
 
 build:
 	mkdir -p bin
-	go build -o bin/wtfi ./cmd/wtfi/main.go
+	cd cmd/wtfi && go build -o ../../bin/wtfi
 
 run:
-	go run ./cmd/wtfi/main.go
+	go run ./cmd/wtfi
 
 fmt:
 	go fmt ./...
