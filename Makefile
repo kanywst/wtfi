@@ -1,10 +1,11 @@
 .PHONY: build run fmt lint test clean
 
 build:
-	go build ./cmd/wtfi
+	mkdir -p bin
+	go build -o bin/wtfi ./cmd/wtfi/main.go
 
 run:
-	go run ./cmd/wtfi
+	go run ./cmd/wtfi/main.go
 
 fmt:
 	go fmt ./...
@@ -23,5 +24,6 @@ test:
 	go test -v -race ./...
 
 clean:
+	rm -rf bin/
 	rm -f wtfi
 	go clean
