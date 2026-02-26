@@ -2,7 +2,7 @@
 
 build:
 	mkdir -p bin
-	go build -o bin/wtfi ./cmd/wtfi/main.go
+	go build -v -o bin/wtfi $$(pwd)/cmd/wtfi/main.go
 
 run:
 	go run ./cmd/wtfi/main.go
