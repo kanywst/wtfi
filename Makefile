@@ -1,10 +1,10 @@
 .PHONY: build run fmt lint test clean
 
 build:
-	go build -o bin/ github.com/kanywst/wtfi/cmd/wtfi
+	go build ./cmd/wtfi
 
 run:
-	go run github.com/kanywst/wtfi/cmd/wtfi
+	go run ./cmd/wtfi
 
 fmt:
 	go fmt ./...
@@ -23,5 +23,5 @@ test:
 	go test -v -race ./...
 
 clean:
-	rm -rf bin/
+	rm -f wtfi
 	go clean
