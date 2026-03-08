@@ -19,8 +19,6 @@ import (
 var (
 	reSignalNoise = regexp.MustCompile(`(-?\d+) dBm / (-?\d+) dBm`)
 	reMTU         = regexp.MustCompile(`mtu (\d+)`)
-	reIfaceFlags  = regexp.MustCompile(`^([a-z0-9]+): flags=`)
-	reInet        = regexp.MustCompile(`\s+inet (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})`)
 	rePingStat    = regexp.MustCompile(`min/avg/max/std-?dev = \d+(?:\.\d*)?/(\d+(?:\.\d*)?)`)
 	rePingRoute   = regexp.MustCompile(`from (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):`)
 	reRouteIface  = regexp.MustCompile(`interface: (\w+)`)
@@ -123,18 +121,28 @@ func parseWiFiInfo(output string, iface string, verbose bool) Result {
 
 	allDetails = append(allDetails, details...)
 
-	for i, detail := range allDetails {
-		prefix := "├─"
-		if i == len(allDetails)-1 {
-			prefix = "└─"
-		}
-		res.Details = append(res.Details, fmt.Sprintf("%s %s", prefix, detail))
-	}
+	res.Details = append(res.Details, formatDetailsWithPrefixes(allDetails)...)
 	if rssi < -80 && rssi != 0 {
 		res.Status = StatusWarning
 		res.Fix = "Weak signal. Move closer to the Access Point."
 	}
 	return res
+}
+
+// formatDetailsWithPrefixes applies the correct UI tree prefixes to a slice of strings.
+func formatDetailsWithPrefixes(details []string) []string {
+	if len(details) == 0 {
+		return nil
+	}
+	formatted := make([]string, len(details))
+	for i, detail := range details {
+		prefix := "├─"
+		if i == len(details)-1 {
+			prefix = "└─"
+		}
+		formatted[i] = fmt.Sprintf("%s %s", prefix, detail)
+	}
+	return formatted
 }
 
 // CheckL3Gateway performs Layer 3 diagnostics for the local gateway.
@@ -190,21 +198,28 @@ func CheckRoutingTable(verbose bool) Result {
 
 	// Get active VPNs and Bridges
 	var virtuals []string
-	out, errCmd := exec.Command("ifconfig").Output()
-	if errCmd != nil {
+	interfaces, errNet := net.Interfaces()
+	if errNet != nil {
 		virtuals = append(virtuals, "Info: Virtual interface check failed")
 	} else {
-		lines := strings.Split(string(out), "\n")
-
-		var currentIface string
-		for _, line := range lines {
-			if m := reIfaceFlags.FindStringSubmatch(line); len(m) > 1 {
-				currentIface = m[1]
-			} else if m := reInet.FindStringSubmatch(line); len(m) > 1 && currentIface != "" {
-				if strings.HasPrefix(currentIface, "utun") {
-					virtuals = append(virtuals, fmt.Sprintf("VPN/Tailscale (%s): Active (%s)", currentIface, m[1]))
-				} else if strings.HasPrefix(currentIface, "bridge") {
-					virtuals = append(virtuals, fmt.Sprintf("Bridge/Docker (%s): Active (%s)", currentIface, m[1]))
+		for _, ifaceObj := range interfaces {
+			name := ifaceObj.Name
+			if strings.HasPrefix(name, "utun") || strings.HasPrefix(name, "bridge") {
+				// Only show if it's "up"
+				if (ifaceObj.Flags & net.FlagUp) != 0 {
+					addrs, _ := ifaceObj.Addrs()
+					for _, addr := range addrs {
+						if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+							if ipnet.IP.To4() != nil {
+								if strings.HasPrefix(name, "utun") {
+									virtuals = append(virtuals, fmt.Sprintf("VPN/Tailscale (%s): Active (%s)", name, ipnet.IP.String()))
+								} else {
+									virtuals = append(virtuals, fmt.Sprintf("Bridge/Docker (%s): Active (%s)", name, ipnet.IP.String()))
+								}
+								break // Only show first IPv4 for brevity
+							}
+						}
+					}
 				}
 			}
 		}
@@ -216,13 +231,7 @@ func CheckRoutingTable(verbose bool) Result {
 	}
 	res.Details = append(res.Details, fmt.Sprintf("%s Default Route: %s (Gateway: %s)", routePrefix, iface, gwStr))
 
-	for i, v := range virtuals {
-		prefix := "├─"
-		if i == len(virtuals)-1 {
-			prefix = "└─"
-		}
-		res.Details = append(res.Details, fmt.Sprintf("%s %s", prefix, v))
-	}
+	res.Details = append(res.Details, formatDetailsWithPrefixes(virtuals)...)
 
 	if len(res.Details) > 1 {
 		res.Message = "Virtual interfaces detected"
@@ -446,7 +455,9 @@ func tcpPing(address string) (time.Duration, error) {
 	if err != nil {
 		return 0, err
 	}
-	_ = conn.Close()
+	if errClose := conn.Close(); errClose != nil {
+		log.Printf("diagnostic: could not close tcpPing connection: %v", errClose)
+	}
 	return time.Since(start), nil
 }
 
@@ -525,6 +536,7 @@ func CheckL3WAN() Result {
 	}
 
 	// Format Details
+	var details []string
 	var ipv4Status string
 	if errIPv4 == nil {
 		ipv4Status = fmt.Sprintf("%v (Reachable)", latIPv4.Round(time.Millisecond))
@@ -533,13 +545,13 @@ func CheckL3WAN() Result {
 	} else {
 		ipv4Status = "TIMEOUT (Unreachable)"
 	}
-	res.Details = append(res.Details, fmt.Sprintf("├─ IPv4 (%s): %s", targetIPv4, ipv4Status))
+	details = append(details, fmt.Sprintf("IPv4 (%s): %s", targetIPv4, ipv4Status))
 
 	ipv6Status := "TIMEOUT (Unreachable)"
 	if errIPv6 == nil {
 		ipv6Status = fmt.Sprintf("%v (Reachable)", latIPv6.Round(time.Millisecond))
 	}
-	res.Details = append(res.Details, fmt.Sprintf("├─ IPv6 (%s): %s", targetIPv6, ipv6Status))
+	details = append(details, fmt.Sprintf("IPv6 (%s): %s", targetIPv6, ipv6Status))
 
 	var tcpStatus string
 	if errTCP == nil {
@@ -547,13 +559,15 @@ func CheckL3WAN() Result {
 	} else {
 		tcpStatus = "TIMEOUT (Failed)"
 	}
-	res.Details = append(res.Details, fmt.Sprintf("├─ TCP 443 (%s): %s", targetIPv4, tcpStatus))
+	details = append(details, fmt.Sprintf("TCP 443 (%s): %s", targetIPv4, tcpStatus))
 
 	if errQoS == nil {
-		res.Details = append(res.Details, fmt.Sprintf("└─ Quality: Loss: %.1f%%, Jitter: %.2fms", loss, jitter))
+		details = append(details, fmt.Sprintf("Quality: Loss: %.1f%%, Jitter: %.2fms", loss, jitter))
 	} else {
-		res.Details = append(res.Details, "└─ Quality: Measurement failed or timed out")
+		details = append(details, "Quality: Measurement failed or timed out")
 	}
+
+	res.Details = formatDetailsWithPrefixes(details)
 
 	return res
 }
