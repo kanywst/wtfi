@@ -66,9 +66,9 @@ func PrintResult(r diagnostic.Result, verbose bool) {
 		}
 	}
 
-	if verbose && len(r.Details) > 0 {
+	if len(r.Details) > 0 {
 		for _, detail := range r.Details {
-			if _, err := color.New(color.FgHiBlack).Printf("   │  %s\n", detail); err != nil {
+			if _, err := color.New(color.FgHiBlack).Printf("   %s\n", detail); err != nil {
 				log.Printf("UI Error: %v", err)
 			}
 		}
