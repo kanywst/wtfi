@@ -232,7 +232,7 @@ func CheckRoutingTable() Result {
 	interfaces, errNet := net.Interfaces()
 	if errNet != nil {
 		res.Status = StatusWarning
-		log.Printf("diagnostic: could not get interfaces: %v", errNet)
+		virtuals = append(virtuals, fmt.Sprintf("Warning: could not list network interfaces: %v", errNet))
 	} else {
 		for _, ifaceObj := range interfaces {
 			var kind string
@@ -252,7 +252,8 @@ func CheckRoutingTable() Result {
 
 			addrs, errAddrs := ifaceObj.Addrs()
 			if errAddrs != nil {
-				log.Printf("diagnostic: could not get addresses for interface %s: %v", ifaceObj.Name, errAddrs)
+				res.Status = StatusWarning
+				virtuals = append(virtuals, fmt.Sprintf("Warning: could not get addresses for interface %s: %v", ifaceObj.Name, errAddrs))
 				continue
 			}
 
