@@ -107,14 +107,23 @@ wtfi -w
 
 ## The Diagnostic Pipeline
 
-1. **Wi-Fi (L2):** Uses `system_profiler` for accurate RSSI, Noise, SSID, and extracts MTU size to detect fragmentation risks.
-2. **Routing & VPNs (L3):** Parses the local routing table to detect split-tunneling issues with Tailscale (`utun`), VPNs, or Docker bridges.
-3. **Gateway (L3):** Automatically resolves your default route and executes high-precision ICMP pings.
-4. **Internet Reachability (L3/L4):** Concurrent IPv4, IPv6, and TCP 443 checks to uncover asymmetric blackholing or ICMP firewalls. Includes a background 5-packet Loss & Jitter measurement.
-5. **DNS Benchmark (L7):** Races your system DNS against Google and Cloudflare to detect slow resolution or hijacking.
-6. **iCloud Private Relay:** Detects if macOS is routing traffic through Apple's proxy nodes.
-7. **Fast Trace:** Concurrent UDP/ICMP mapping of your hop-by-hop route to the internet.
-8. **Captive Portal (L7):** Checks Apple's hotspot-detect endpoint with memory-safe `io.LimitReader`.
+1. **Wi-Fi (L2):** Uses `system_profiler` for accurate RSSI, Noise, SSID, and
+   extracts MTU size to detect fragmentation risks.
+2. **Routing & VPNs (L3):** Parses the local routing table to detect
+   split-tunneling issues with Tailscale (`utun`), VPNs, or Docker bridges.
+3. **Gateway (L3):** Automatically resolves your default route and executes
+   high-precision ICMP pings.
+4. **Internet Reachability (L3/L4):** Concurrent IPv4, IPv6, and TCP 443
+   checks to uncover asymmetric blackholing or ICMP firewalls. Includes a
+   background 5-packet Loss & Jitter measurement.
+5. **DNS Benchmark (L7):** Races your system DNS against Google and
+   Cloudflare to detect slow resolution or hijacking.
+6. **iCloud Private Relay:** Detects if macOS is routing traffic through
+   Apple's proxy nodes.
+7. **Fast Trace:** Concurrent UDP/ICMP mapping of your hop-by-hop route to
+   the internet.
+8. **Captive Portal (L7):** Checks Apple's hotspot-detect endpoint with
+   memory-safe `io.LimitReader`.
 
 ---
 
