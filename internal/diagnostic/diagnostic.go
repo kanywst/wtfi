@@ -169,16 +169,29 @@ func CheckL3Gateway(verbose bool) Result {
 
 	if verbose {
 		var details []string
-		out, _ := exec.Command("arp", "-n", gw).Output()
+		out, errArp := exec.Command("arp", "-n", gw).Output()
 		details = append(details, "--- ARP Entry ---")
-		details = append(details, strings.TrimSpace(string(out)))
-		iface, _ := getPrimaryInterface()
-		outIf, _ := exec.Command("ifconfig", iface).Output()
+		if errArp != nil {
+			details = append(details, fmt.Sprintf("Failed: %v", errArp))
+		} else {
+			details = append(details, strings.TrimSpace(string(out)))
+		}
+
+		iface, errIface := getPrimaryInterface()
 		details = append(details, "--- Interface Details ---")
-		lines := strings.Split(string(outIf), "\n")
-		for _, l := range lines {
-			if strings.Contains(l, "inet ") {
-				details = append(details, strings.TrimSpace(l))
+		if errIface != nil {
+			details = append(details, fmt.Sprintf("Failed to get interface: %v", errIface))
+		} else {
+			outIf, errIf := exec.Command("ifconfig", iface).Output()
+			if errIf != nil {
+				details = append(details, fmt.Sprintf("Failed ifconfig: %v", errIf))
+			} else {
+				lines := strings.Split(string(outIf), "\n")
+				for _, l := range lines {
+					if strings.Contains(l, "inet ") {
+						details = append(details, strings.TrimSpace(l))
+					}
+				}
 			}
 		}
 		res.Details = formatDetailsWithPrefixes(details)
@@ -481,7 +494,7 @@ func tcpPing(address string) (time.Duration, error) {
 
 // MeasureLossAndJitter performs a 5-packet ping with 0.2s interval to calculate loss and jitter.
 func MeasureLossAndJitter(ip string) (float64, float64, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "ping", "-c", "5", "-i", "0.2", ip)
