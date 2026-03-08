@@ -20,13 +20,13 @@ var (
 	reSignalNoise = regexp.MustCompile(`(-?\d+) dBm / (-?\d+) dBm`)
 	reMTU         = regexp.MustCompile(`mtu (\d+)`)
 	reIfaceFlags  = regexp.MustCompile(`^([a-z0-9]+): flags=`)
-	reInet        = regexp.MustCompile(`\s+inet (\d+\.\d+\.\d+\.\d+)`)
-	rePingStat    = regexp.MustCompile(`min/avg/max/std-?dev = [\d\.]+/([\d\.]+)`)
-	rePingRoute   = regexp.MustCompile(`from ([\d\.]+):`)
+	reInet        = regexp.MustCompile(`\s+inet (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})`)
+	rePingStat    = regexp.MustCompile(`min/avg/max/std-?dev = \d+(?:\.\d*)?/(\d+(?:\.\d*)?)`)
+	rePingRoute   = regexp.MustCompile(`from (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):`)
 	reRouteIface  = regexp.MustCompile(`interface: (\w+)`)
-	reRouteGw     = regexp.MustCompile(`gateway: (\d+\.\d+\.\d+\.\d+)`)
+	reRouteGw     = regexp.MustCompile(`gateway: (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})`)
 	reLoss        = regexp.MustCompile(`(\d+\.?\d*)% packet loss`)
-	reJitter      = regexp.MustCompile(`min/avg/max/std-?dev = [\d\.]+/[\d\.]+/[\d\.]+/([\d\.]+)`)
+	reJitter      = regexp.MustCompile(`min/avg/max/std-?dev = \d+(?:\.\d*)?/\d+(?:\.\d*)?/\d+(?:\.\d*)?/(\d+(?:\.\d*)?)`)
 )
 
 // Status represents the health status of a diagnostic step.
@@ -114,7 +114,11 @@ func parseWiFiInfo(output string, iface string, verbose bool) Result {
 	if err == nil {
 		if m := reMTU.FindStringSubmatch(string(outIf)); len(m) > 1 {
 			mtu = m[1]
-			res.Details = append(res.Details, fmt.Sprintf("├─ MTU: %s (Standard is 1500)", mtu))
+			prefix := "├─"
+			if len(details) == 0 {
+				prefix = "└─"
+			}
+			res.Details = append(res.Details, fmt.Sprintf("%s MTU: %s (Standard is 1500)", prefix, mtu))
 		}
 	}
 
@@ -172,15 +176,15 @@ func CheckRoutingTable(verbose bool) Result {
 	}
 
 	gw, err := getGatewayIP()
-	if err != nil {
-		res.Details = append(res.Details, fmt.Sprintf("├─ Default Route: %s (Gateway: Unknown)", iface))
-	} else {
-		res.Details = append(res.Details, fmt.Sprintf("├─ Default Route: %s (Gateway: %s)", iface, gw))
+	gwStr := "Unknown"
+	if err == nil {
+		gwStr = gw
 	}
 
 	// Get active VPNs and Bridges
-	out, err := exec.Command("ifconfig").Output()
-	if err == nil {
+	var virtuals []string
+	out, errCmd := exec.Command("ifconfig").Output()
+	if errCmd == nil {
 		lines := strings.Split(string(out), "\n")
 
 		var currentIface string
@@ -189,12 +193,26 @@ func CheckRoutingTable(verbose bool) Result {
 				currentIface = m[1]
 			} else if m := reInet.FindStringSubmatch(line); len(m) > 1 && currentIface != "" {
 				if strings.HasPrefix(currentIface, "utun") {
-					res.Details = append(res.Details, fmt.Sprintf("├─ VPN/Tailscale (%s): Active (%s)", currentIface, m[1]))
+					virtuals = append(virtuals, fmt.Sprintf("VPN/Tailscale (%s): Active (%s)", currentIface, m[1]))
 				} else if strings.HasPrefix(currentIface, "bridge") {
-					res.Details = append(res.Details, fmt.Sprintf("└─ Bridge/Docker (%s): Active (%s)", currentIface, m[1]))
+					virtuals = append(virtuals, fmt.Sprintf("Bridge/Docker (%s): Active (%s)", currentIface, m[1]))
 				}
 			}
 		}
+	}
+
+	routePrefix := "├─"
+	if len(virtuals) == 0 {
+		routePrefix = "└─"
+	}
+	res.Details = append(res.Details, fmt.Sprintf("%s Default Route: %s (Gateway: %s)", routePrefix, iface, gwStr))
+
+	for i, v := range virtuals {
+		prefix := "├─"
+		if i == len(virtuals)-1 {
+			prefix = "└─"
+		}
+		res.Details = append(res.Details, fmt.Sprintf("%s %s", prefix, v))
 	}
 
 	if len(res.Details) > 1 {
@@ -391,7 +409,10 @@ func ping(ip string) (time.Duration, error) {
 func parsePing(output string) (time.Duration, error) {
 	m := rePingStat.FindStringSubmatch(output)
 	if len(m) > 1 {
-		avg, _ := strconv.ParseFloat(m[1], 64)
+		avg, err := strconv.ParseFloat(m[1], 64)
+		if err != nil {
+			return 0, fmt.Errorf("failed to parse avg latency from '%s': %w", m[1], err)
+		}
 		return time.Duration(avg * float64(time.Millisecond)), nil
 	}
 	return 0, fmt.Errorf("failed to parse ping metrics")

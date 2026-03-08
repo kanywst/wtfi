@@ -120,7 +120,7 @@ wtfi -w
    Cloudflare to detect slow resolution or hijacking.
 6. **iCloud Private Relay:** Detects if macOS is routing traffic through
    Apple's proxy nodes.
-7. **Fast Trace:** Concurrent UDP/ICMP mapping of your hop-by-hop route to
+7. **Fast Trace:** Concurrent ICMP mapping of your hop-by-hop route to
    the internet.
 8. **Captive Portal (L7):** Checks Apple's hotspot-detect endpoint with
    memory-safe `io.LimitReader`.
