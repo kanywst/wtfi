@@ -169,18 +169,20 @@ func CheckL3Gateway(verbose bool) Result {
 	}
 
 	if verbose {
+		var details []string
 		out, _ := exec.Command("arp", "-n", gw).Output()
-		res.Details = append(res.Details, "--- ARP Entry ---")
-		res.Details = append(res.Details, strings.TrimSpace(string(out)))
+		details = append(details, "--- ARP Entry ---")
+		details = append(details, strings.TrimSpace(string(out)))
 		iface, _ := getPrimaryInterface()
 		outIf, _ := exec.Command("ifconfig", iface).Output()
-		res.Details = append(res.Details, "--- Interface Details ---")
+		details = append(details, "--- Interface Details ---")
 		lines := strings.Split(string(outIf), "\n")
 		for _, l := range lines {
 			if strings.Contains(l, "inet ") {
-				res.Details = append(res.Details, strings.TrimSpace(l))
+				details = append(details, strings.TrimSpace(l))
 			}
 		}
+		res.Details = formatDetailsWithPrefixes(details)
 	}
 	return res
 }
@@ -223,9 +225,9 @@ func CheckRoutingTable() Result {
 						if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
 							if ipnet.IP.To4() != nil {
 								if strings.HasPrefix(name, "utun") {
-									virtuals = append(virtuals, fmt.Sprintf("VPN/Tailscale (%s): Active (%s)", name, ipnet.IP.String()))
+									virtuals = append(virtuals, fmt.Sprintf("VPN/Tailscale (%s): Active (%s)", ifaceObj.Name, ipnet.IP.String()))
 								} else {
-									virtuals = append(virtuals, fmt.Sprintf("Bridge/Docker (%s): Active (%s)", name, ipnet.IP.String()))
+									virtuals = append(virtuals, fmt.Sprintf("Bridge/Docker (%s): Active (%s)", ifaceObj.Name, ipnet.IP.String()))
 								}
 								break // Only show first IPv4 for brevity
 							}
@@ -292,7 +294,7 @@ func CheckDNSBenchmark() Result {
 		}
 	}
 
-	res.Details = details
+	res.Details = formatDetailsWithPrefixes(details)
 	if res.Latency > 200*time.Millisecond {
 		res.Status = StatusWarning
 		res.Message = "High DNS latency detected"
@@ -313,9 +315,11 @@ func CheckPrivateRelay(verbose bool) Result {
 	if err == nil && len(ips) > 0 {
 		res.Message = "Active (Apple Proxy Node detected)"
 		if verbose {
+			var details []string
 			for _, ip := range ips {
-				res.Details = append(res.Details, "Proxy Node: "+ip.String())
+				details = append(details, "Proxy Node: "+ip.String())
 			}
+			res.Details = formatDetailsWithPrefixes(details)
 		}
 	} else {
 		res.Message = "Inactive or Bypass mode"
@@ -351,11 +355,13 @@ func FastTraceroute(verbose bool) Result {
 	}
 	wg.Wait()
 
+	var details []string
 	for _, h := range hops {
 		if h != "" {
-			res.Details = append(res.Details, h)
+			details = append(details, h)
 		}
 	}
+	res.Details = formatDetailsWithPrefixes(details)
 	return res
 }
 
@@ -376,10 +382,12 @@ func CheckCaptivePortal(verbose bool) Result {
 
 	res := Result{Name: "Captive Portal", Emoji: "🍎", Latency: dur, Status: StatusOk}
 	if verbose {
-		res.Details = append(res.Details, "Response Status: "+resp.Status)
+		var details []string
+		details = append(details, "Response Status: "+resp.Status)
 		for k, v := range resp.Header {
-			res.Details = append(res.Details, k+": "+strings.Join(v, ", "))
+			details = append(details, k+": "+strings.Join(v, ", "))
 		}
+		res.Details = formatDetailsWithPrefixes(details)
 	}
 
 	lr := io.LimitReader(resp.Body, 1024)
