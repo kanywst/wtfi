@@ -205,14 +205,23 @@ func CheckRoutingTable() Result {
 	res := Result{Name: "Routing Table & VPNs", Emoji: "🛣️", Status: StatusOk}
 
 	// Get default route
-	iface, err := getPrimaryInterface()
+	// Get default route info in a single pass to save a process spawn
+	out, err := exec.Command("route", "-n", "get", "default").Output()
 	if err != nil {
 		res.Status = StatusError
 		res.Message = "No Default Route"
 		return res
 	}
+	routeInfo := string(out)
 
-	gw, err := getGatewayIP()
+	iface, err := parseInterface(routeInfo)
+	if err != nil {
+		res.Status = StatusError
+		res.Message = "Failed to parse default interface"
+		return res
+	}
+
+	gw, err := parseGateway(routeInfo)
 	gwStr := "Unknown"
 	if err == nil {
 		gwStr = gw
