@@ -232,19 +232,28 @@ func CheckRoutingTable() Result {
 						log.Printf("diagnostic: could not get addresses for interface %s: %v", ifaceObj.Name, errAddrs)
 						continue
 					}
+					var ipStr string
 					for _, addr := range addrs {
 						if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
 							if ipnet.IP.To4() != nil {
-								var kind string
-								if strings.HasPrefix(ifaceObj.Name, "utun") {
-									kind = "VPN/Tailscale"
-								} else {
-									kind = "Bridge/Docker"
-								}
-								virtuals = append(virtuals, fmt.Sprintf("%s (%s): Active (%s)", kind, ifaceObj.Name, ipnet.IP.String()))
-								break // Only show first IPv4 for brevity
+								ipStr = ipnet.IP.String()
+								break // Prefer IPv4 for brevity
+							}
+							// Fallback to first available IPv6 if no IPv4 is found yet
+							if ipStr == "" && ipnet.IP.To16() != nil {
+								ipStr = ipnet.IP.String()
 							}
 						}
+					}
+
+					if ipStr != "" {
+						var kind string
+						if strings.HasPrefix(ifaceObj.Name, "utun") {
+							kind = "VPN/Tailscale"
+						} else {
+							kind = "Bridge/Docker"
+						}
+						virtuals = append(virtuals, fmt.Sprintf("%s (%s): Active (%s)", kind, ifaceObj.Name, ipStr))
 					}
 				}
 			}
