@@ -16,6 +16,19 @@ import (
 	"time"
 )
 
+var (
+	reSignalNoise = regexp.MustCompile(`(-?\d+) dBm / (-?\d+) dBm`)
+	reMTU         = regexp.MustCompile(`mtu (\d+)`)
+	reIfaceFlags  = regexp.MustCompile(`^([a-z0-9]+): flags=`)
+	reInet        = regexp.MustCompile(`\s+inet (\d+\.\d+\.\d+\.\d+)`)
+	rePingStat    = regexp.MustCompile(`min/avg/max/std-?dev = [\d\.]+/([\d\.]+)`)
+	rePingRoute   = regexp.MustCompile(`from ([\d\.]+):`)
+	reRouteIface  = regexp.MustCompile(`interface: (\w+)`)
+	reRouteGw     = regexp.MustCompile(`gateway: (\d+\.\d+\.\d+\.\d+)`)
+	reLoss        = regexp.MustCompile(`(\d+\.?\d*)% packet loss`)
+	reJitter      = regexp.MustCompile(`min/avg/max/std-?dev = [\d\.]+/[\d\.]+/[\d\.]+/([\d\.]+)`)
+)
+
 // Status represents the health status of a diagnostic step.
 type Status int
 
@@ -76,8 +89,7 @@ func parseWiFiInfo(output string, iface string, verbose bool) Result {
 				res.Name = fmt.Sprintf("Wi-Fi (%s)", ssid)
 			}
 			if strings.Contains(line, "Signal / Noise") {
-				re := regexp.MustCompile(`(-?\d+) dBm / (-?\d+) dBm`)
-				m := re.FindStringSubmatch(line)
+				m := reSignalNoise.FindStringSubmatch(line)
 				if len(m) > 1 {
 					rssi, _ = strconv.Atoi(m[1])
 				}
@@ -100,21 +112,9 @@ func parseWiFiInfo(output string, iface string, verbose bool) Result {
 	// Extract MTU size
 	outIf, err := exec.Command("ifconfig", iface).Output()
 	if err == nil {
-		reMTU := regexp.MustCompile(`mtu (\d+)`)
 		if m := reMTU.FindStringSubmatch(string(outIf)); len(m) > 1 {
 			mtu = m[1]
 			res.Details = append(res.Details, fmt.Sprintf("├─ MTU: %s (Standard is 1500)", mtu))
-			// Only output MTU unconditionally if the user requested it outside of verbose,
-			// or as part of the normal detail block. We'll append it to info if we want it always.
-			// Actually, per user request: it should be part of the UI.
-			// We can append it to Message if we want it visible without -v, but standard is `-v`.
-			// The user explicitly requested it in the default output style in the prompt.
-			// However `Details` is only shown in verbose mode by default in UI.
-			// Let's add it to Details, and if we want it always, change the UI later.
-			// Wait, the user showed:
-			// ├─ Info: Interface: en0, Signal: -52 dBm
-			// ├─ MTU: 1500 (Standard)
-			// Let's integrate it gracefully by pre-pending it to Details to ensure it's visible.
 		}
 	}
 
@@ -171,19 +171,21 @@ func CheckRoutingTable(verbose bool) Result {
 		return res
 	}
 
-	gw, _ := getGatewayIP()
-	res.Details = append(res.Details, fmt.Sprintf("├─ Default Route: %s (Gateway: %s)", iface, gw))
+	gw, err := getGatewayIP()
+	if err != nil {
+		res.Details = append(res.Details, fmt.Sprintf("├─ Default Route: %s (Gateway: Unknown)", iface))
+	} else {
+		res.Details = append(res.Details, fmt.Sprintf("├─ Default Route: %s (Gateway: %s)", iface, gw))
+	}
 
 	// Get active VPNs and Bridges
 	out, err := exec.Command("ifconfig").Output()
 	if err == nil {
 		lines := strings.Split(string(out), "\n")
-		reIface := regexp.MustCompile(`^([a-z0-9]+): flags=`)
-		reInet := regexp.MustCompile(`\s+inet (\d+\.\d+\.\d+\.\d+)`)
 
 		var currentIface string
 		for _, line := range lines {
-			if m := reIface.FindStringSubmatch(line); len(m) > 1 {
+			if m := reIfaceFlags.FindStringSubmatch(line); len(m) > 1 {
 				currentIface = m[1]
 			} else if m := reInet.FindStringSubmatch(line); len(m) > 1 && currentIface != "" {
 				if strings.HasPrefix(currentIface, "utun") {
@@ -291,8 +293,7 @@ func FastTraceroute(verbose bool) Result {
 			defer wg.Done()
 			out, err := exec.Command("ping", "-c", "1", "-t", strconv.Itoa(ttl), "-o", target).Output()
 			if err == nil {
-				re := regexp.MustCompile(`from ([\d\.]+):`)
-				m := re.FindStringSubmatch(string(out))
+				m := rePingRoute.FindStringSubmatch(string(out))
 				if len(m) > 1 {
 					hops[ttl] = fmt.Sprintf("Hop %2d: %s", ttl, m[1])
 				}
@@ -353,8 +354,7 @@ func getPrimaryInterface() (string, error) {
 }
 
 func parseInterface(output string) (string, error) {
-	re := regexp.MustCompile(`interface: (\w+)`)
-	m := re.FindStringSubmatch(output)
+	m := reRouteIface.FindStringSubmatch(output)
 	if len(m) > 1 {
 		return m[1], nil
 	}
@@ -370,8 +370,7 @@ func getGatewayIP() (string, error) {
 }
 
 func parseGateway(output string) (string, error) {
-	re := regexp.MustCompile(`gateway: (\d+\.\d+\.\d+\.\d+)`)
-	m := re.FindStringSubmatch(output)
+	m := reRouteGw.FindStringSubmatch(output)
 	if len(m) > 1 {
 		return m[1], nil
 	}
@@ -390,8 +389,7 @@ func ping(ip string) (time.Duration, error) {
 }
 
 func parsePing(output string) (time.Duration, error) {
-	re := regexp.MustCompile(`min/avg/max/stddev = [\d\.]+/([\d\.]+)`)
-	m := re.FindStringSubmatch(output)
+	m := rePingStat.FindStringSubmatch(output)
 	if len(m) > 1 {
 		avg, _ := strconv.ParseFloat(m[1], 64)
 		return time.Duration(avg * float64(time.Millisecond)), nil
@@ -436,20 +434,24 @@ func MeasureLossAndJitter(ip string) (float64, float64, error) {
 
 	output := string(out)
 
-	reLoss := regexp.MustCompile(`(\d+\.?\d*)% packet loss`)
 	lossStr := "0"
 	if m := reLoss.FindStringSubmatch(output); len(m) > 1 {
 		lossStr = m[1]
 	}
 
-	reJitter := regexp.MustCompile(`min/avg/max/stddev = [\d\.]+/[\d\.]+/[\d\.]+/([\d\.]+)`)
 	jitterStr := "0.0"
 	if m := reJitter.FindStringSubmatch(output); len(m) > 1 {
 		jitterStr = m[1]
 	}
 
-	loss, _ := strconv.ParseFloat(lossStr, 64)
-	jitter, _ := strconv.ParseFloat(jitterStr, 64)
+	loss, err := strconv.ParseFloat(lossStr, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to parse loss: %w", err)
+	}
+	jitter, err := strconv.ParseFloat(jitterStr, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to parse jitter: %w", err)
+	}
 
 	return loss, jitter, nil
 }
