@@ -233,15 +233,19 @@ func CheckRoutingTable() Result {
 						continue
 					}
 					var ipStr string
+					// First pass for IPv4 for brevity
 					for _, addr := range addrs {
-						if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-							if ipnet.IP.To4() != nil {
+						if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
+							ipStr = ipnet.IP.String()
+							break
+						}
+					}
+					// If no IPv4, fallback to the first available IPv6
+					if ipStr == "" {
+						for _, addr := range addrs {
+							if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To16() != nil {
 								ipStr = ipnet.IP.String()
-								break // Prefer IPv4 for brevity
-							}
-							// Fallback to first available IPv6 if no IPv4 is found yet
-							if ipStr == "" && ipnet.IP.To16() != nil {
-								ipStr = ipnet.IP.String()
+								break
 							}
 						}
 					}
