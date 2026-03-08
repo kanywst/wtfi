@@ -109,20 +109,27 @@ func parseWiFiInfo(output string, iface string, verbose bool) Result {
 		res.Message = fmt.Sprintf("Interface: %s, Signal: %d dBm", iface, rssi)
 	}
 
+	// Unify details for consistent prefixing
+	var allDetails []string
+
 	// Extract MTU size
 	outIf, err := exec.Command("ifconfig", iface).Output()
 	if err == nil {
 		if m := reMTU.FindStringSubmatch(string(outIf)); len(m) > 1 {
 			mtu = m[1]
-			prefix := "├─"
-			if len(details) == 0 {
-				prefix = "└─"
-			}
-			res.Details = append(res.Details, fmt.Sprintf("%s MTU: %s (Standard is 1500)", prefix, mtu))
+			allDetails = append(allDetails, fmt.Sprintf("MTU: %s (Standard is 1500)", mtu))
 		}
 	}
 
-	res.Details = append(res.Details, details...)
+	allDetails = append(allDetails, details...)
+
+	for i, detail := range allDetails {
+		prefix := "├─"
+		if i == len(allDetails)-1 {
+			prefix = "└─"
+		}
+		res.Details = append(res.Details, fmt.Sprintf("%s %s", prefix, detail))
+	}
 	if rssi < -80 && rssi != 0 {
 		res.Status = StatusWarning
 		res.Fix = "Weak signal. Move closer to the Access Point."

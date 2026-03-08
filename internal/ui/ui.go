@@ -61,7 +61,11 @@ func PrintResult(r diagnostic.Result, verbose bool) {
 
 	if r.Message != "" {
 		msgColor := color.New(color.FgWhite).Add(color.Faint)
-		if _, err := msgColor.Printf("   ├─ Info: %s\n", r.Message); err != nil {
+		prefix := "├─"
+		if len(r.Details) == 0 && r.Fix == "" {
+			prefix = "└─"
+		}
+		if _, err := msgColor.Printf("   %s Info: %s\n", prefix, r.Message); err != nil {
 			log.Printf("UI Error: %v", err)
 		}
 	}
