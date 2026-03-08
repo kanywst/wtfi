@@ -61,14 +61,18 @@ func PrintResult(r diagnostic.Result, verbose bool) {
 
 	if r.Message != "" {
 		msgColor := color.New(color.FgWhite).Add(color.Faint)
-		if _, err := msgColor.Printf("   ├─ Info: %s\n", r.Message); err != nil {
+		prefix := "├─"
+		if len(r.Details) == 0 && r.Fix == "" {
+			prefix = "└─"
+		}
+		if _, err := msgColor.Printf("   %s Info: %s\n", prefix, r.Message); err != nil {
 			log.Printf("UI Error: %v", err)
 		}
 	}
 
-	if verbose && len(r.Details) > 0 {
+	if len(r.Details) > 0 {
 		for _, detail := range r.Details {
-			if _, err := color.New(color.FgHiBlack).Printf("   │  %s\n", detail); err != nil {
+			if _, err := color.New(color.FgHiBlack).Printf("   %s\n", detail); err != nil {
 				log.Printf("UI Error: %v", err)
 			}
 		}

@@ -16,6 +16,18 @@ import (
 	"time"
 )
 
+var (
+	reSignalNoise  = regexp.MustCompile(`(-?\d+) dBm / (-?\d+) dBm`)
+	reMTU          = regexp.MustCompile(`mtu (\d+)`)
+	rePingStat     = regexp.MustCompile(`min/avg/max/std-?dev = \d+(?:\.\d*)?/(\d+(?:\.\d*)?)`)
+	rePingRoute    = regexp.MustCompile(`from (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):`)
+	reRouteIface   = regexp.MustCompile(`interface: (\w+)`)
+	reRouteGw      = regexp.MustCompile(`gateway: (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})`)
+	reLoss         = regexp.MustCompile(`(\d+\.?\d*)% packet loss`)
+	reJitter       = regexp.MustCompile(`min/avg/max/std-?dev = \d+(?:\.\d*)?/\d+(?:\.\d*)?/\d+(?:\.\d*)?/(\d+(?:\.\d*)?)`)
+	reSanitizeHTTP = regexp.MustCompile(`[\x00-\x1F\x7F-\x9F]`)
+)
+
 // Status represents the health status of a diagnostic step.
 type Status int
 
@@ -26,6 +38,12 @@ const (
 	StatusWarning
 	// StatusError indicates a failure state.
 	StatusError
+)
+
+const (
+	wanTargetIPv4 = "1.1.1.1"
+	wanTargetIPv6 = "2606:4700:4700::1111"
+	wanTargetTCP  = "1.1.1.1:443"
 )
 
 // Result holds the outcome of a diagnostic check.
@@ -72,11 +90,10 @@ func parseWiFiInfo(output string, iface string, verbose bool) Result {
 		if isCurrent {
 			if strings.HasSuffix(trimmed, ":") && ssid == "" {
 				ssid = strings.TrimSuffix(trimmed, ":")
-				res.Name = fmt.Sprintf("Wi-Fi (%s)", ssid)
+				res.Name = fmt.Sprintf("Wi-Fi (%s)", reSanitizeHTTP.ReplaceAllString(ssid, ""))
 			}
 			if strings.Contains(line, "Signal / Noise") {
-				re := regexp.MustCompile(`(-?\d+) dBm / (-?\d+) dBm`)
-				m := re.FindStringSubmatch(line)
+				m := reSignalNoise.FindStringSubmatch(line)
 				if len(m) > 1 {
 					rssi, _ = strconv.Atoi(m[1])
 				}
@@ -95,12 +112,44 @@ func parseWiFiInfo(output string, iface string, verbose bool) Result {
 	} else {
 		res.Message = fmt.Sprintf("Interface: %s, Signal: %d dBm", iface, rssi)
 	}
-	res.Details = details
+
+	// Unify details for consistent prefixing
+	var allDetails []string
+
+	// Extract MTU size
+	outIf, err := exec.Command("ifconfig", iface).Output()
+	if err != nil {
+		allDetails = append(allDetails, fmt.Sprintf("MTU: unavailable (%v)", err))
+	} else {
+		if m := reMTU.FindStringSubmatch(string(outIf)); len(m) > 1 {
+			allDetails = append(allDetails, fmt.Sprintf("MTU: %s (Standard is 1500)", m[1]))
+		}
+	}
+
+	allDetails = append(allDetails, details...)
+
+	res.Details = append(res.Details, formatDetailsWithPrefixes(allDetails)...)
 	if rssi < -80 && rssi != 0 {
 		res.Status = StatusWarning
 		res.Fix = "Weak signal. Move closer to the Access Point."
 	}
 	return res
+}
+
+// formatDetailsWithPrefixes applies the correct UI tree prefixes to a slice of strings.
+func formatDetailsWithPrefixes(details []string) []string {
+	if len(details) == 0 {
+		return nil
+	}
+	formatted := make([]string, len(details))
+	for i, detail := range details {
+		prefix := "├─"
+		if i == len(details)-1 {
+			prefix = "└─"
+		}
+		formatted[i] = fmt.Sprintf("%s %s", prefix, reSanitizeHTTP.ReplaceAllString(detail, ""))
+	}
+	return formatted
 }
 
 // CheckL3Gateway performs Layer 3 diagnostics for the local gateway.
@@ -120,19 +169,139 @@ func CheckL3Gateway(verbose bool) Result {
 	}
 
 	if verbose {
-		out, _ := exec.Command("arp", "-n", gw).Output()
-		res.Details = append(res.Details, "--- ARP Entry ---")
-		res.Details = append(res.Details, strings.TrimSpace(string(out)))
-		iface, _ := getPrimaryInterface()
-		outIf, _ := exec.Command("ifconfig", iface).Output()
-		res.Details = append(res.Details, "--- Interface Details ---")
-		lines := strings.Split(string(outIf), "\n")
-		for _, l := range lines {
-			if strings.Contains(l, "inet ") {
-				res.Details = append(res.Details, strings.TrimSpace(l))
+		var details []string
+		out, errArp := exec.Command("arp", "-n", gw).Output()
+		details = append(details, "--- ARP Entry ---")
+		if errArp != nil {
+			details = append(details, fmt.Sprintf("Failed: %v", errArp))
+		} else {
+			details = append(details, strings.TrimSpace(string(out)))
+		}
+
+		iface, errIface := getPrimaryInterface()
+		details = append(details, "--- Interface Details ---")
+		if errIface != nil {
+			details = append(details, fmt.Sprintf("Failed to get interface: %v", errIface))
+		} else {
+			outIf, errIf := exec.Command("ifconfig", iface).Output()
+			if errIf != nil {
+				details = append(details, fmt.Sprintf("Failed ifconfig: %v", errIf))
+			} else {
+				lines := strings.Split(string(outIf), "\n")
+				for _, l := range lines {
+					if strings.Contains(l, "inet ") {
+						details = append(details, strings.TrimSpace(l))
+					}
+				}
+			}
+		}
+		res.Details = formatDetailsWithPrefixes(details)
+	}
+	return res
+}
+
+// CheckRoutingTable checks active network routing and Virtual Networks (VPNs/Docker).
+func CheckRoutingTable() Result {
+	res := Result{Name: "Routing Table & VPNs", Emoji: "🛣️", Status: StatusOk}
+
+	// Get default route
+	// Get default route info in a single pass to save a process spawn
+	out, err := exec.Command("route", "-n", "get", "default").Output()
+	if err != nil {
+		res.Status = StatusError
+		res.Message = "No Default Route"
+		return res
+	}
+	routeInfo := string(out)
+
+	iface, err := parseInterface(routeInfo)
+	if err != nil {
+		res.Status = StatusError
+		res.Message = "Failed to parse default interface"
+		return res
+	}
+
+	gw, err := parseGateway(routeInfo)
+	gwStr := "Unknown"
+	if err == nil {
+		gwStr = gw
+	}
+
+	// Get active VPNs and Bridges
+	var virtuals []string
+	interfaces, errNet := net.Interfaces()
+	if errNet != nil {
+		res.Status = StatusWarning
+		virtuals = append(virtuals, fmt.Sprintf("Warning: could not list network interfaces: %v", errNet))
+	} else {
+		for _, ifaceObj := range interfaces {
+			var kind string
+			switch {
+			case strings.HasPrefix(ifaceObj.Name, "utun"):
+				kind = "VPN/Tailscale"
+			case strings.HasPrefix(ifaceObj.Name, "bridge"):
+				kind = "Bridge/Docker"
+			case strings.HasPrefix(ifaceObj.Name, "wg"):
+				kind = "VPN/WireGuard"
+			case strings.HasPrefix(ifaceObj.Name, "tun"):
+				kind = "VPN/OpenVPN"
+			default:
+				continue
+			}
+
+			// Only show if it's "up"
+			if (ifaceObj.Flags & net.FlagUp) == 0 {
+				continue
+			}
+
+			addrs, errAddrs := ifaceObj.Addrs()
+			if errAddrs != nil {
+				res.Status = StatusWarning
+				virtuals = append(virtuals, fmt.Sprintf("Warning: could not get addresses for interface %s: %v", ifaceObj.Name, errAddrs))
+				continue
+			}
+
+			var ipStr string
+			// Find first IPv4 and IPv6 address in a single pass
+			var ipv4, ipv6 string
+			for _, addr := range addrs {
+				if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+					if ipv4 != "" && ipv6 != "" {
+						break // Found both, no need to continue
+					}
+					if ipnet.IP.To4() != nil {
+						if ipv4 == "" {
+							ipv4 = ipnet.IP.String()
+						}
+					} else if ipv6 == "" {
+						ipv6 = ipnet.IP.String()
+					}
+				}
+			}
+
+			if ipv4 != "" {
+				ipStr = ipv4 // Prefer IPv4 for brevity
+			} else {
+				ipStr = ipv6
+			}
+
+			if ipStr != "" {
+				virtuals = append(virtuals, fmt.Sprintf("%s (%s): Active (%s)", kind, ifaceObj.Name, ipStr))
 			}
 		}
 	}
+
+	var details []string
+	details = append(details, fmt.Sprintf("Default Route: %s (Gateway: %s)", iface, gwStr))
+	details = append(details, virtuals...)
+	res.Details = append(res.Details, formatDetailsWithPrefixes(details)...)
+
+	if len(res.Details) > 1 {
+		res.Message = "Virtual interfaces detected"
+	} else {
+		res.Message = "Standard physical routing"
+	}
+
 	return res
 }
 
@@ -175,7 +344,7 @@ func CheckDNSBenchmark() Result {
 		}
 	}
 
-	res.Details = details
+	res.Details = formatDetailsWithPrefixes(details)
 	if res.Latency > 200*time.Millisecond {
 		res.Status = StatusWarning
 		res.Message = "High DNS latency detected"
@@ -196,9 +365,11 @@ func CheckPrivateRelay(verbose bool) Result {
 	if err == nil && len(ips) > 0 {
 		res.Message = "Active (Apple Proxy Node detected)"
 		if verbose {
+			var details []string
 			for _, ip := range ips {
-				res.Details = append(res.Details, "Proxy Node: "+ip.String())
+				details = append(details, "Proxy Node: "+ip.String())
 			}
+			res.Details = formatDetailsWithPrefixes(details)
 		}
 	} else {
 		res.Message = "Inactive or Bypass mode"
@@ -221,13 +392,10 @@ func FastTraceroute(verbose bool) Result {
 		wg.Add(1)
 		go func(ttl int) {
 			defer wg.Done()
-			out, err := exec.Command("ping", "-c", "1", "-t", strconv.Itoa(ttl), "-o", target).Output()
-			if err == nil {
-				re := regexp.MustCompile(`from ([\d\.]+):`)
-				m := re.FindStringSubmatch(string(out))
-				if len(m) > 1 {
-					hops[ttl] = fmt.Sprintf("Hop %2d: %s", ttl, m[1])
-				}
+			out, _ := exec.Command("ping", "-c", "1", "-t", strconv.Itoa(ttl), target).Output()
+			m := rePingRoute.FindStringSubmatch(string(out))
+			if len(m) > 1 {
+				hops[ttl] = fmt.Sprintf("Hop %2d: %s", ttl, m[1])
 			} else {
 				hops[ttl] = fmt.Sprintf("Hop %2d: * (Request timed out)", ttl)
 			}
@@ -235,11 +403,13 @@ func FastTraceroute(verbose bool) Result {
 	}
 	wg.Wait()
 
+	var details []string
 	for _, h := range hops {
 		if h != "" {
-			res.Details = append(res.Details, h)
+			details = append(details, h)
 		}
 	}
+	res.Details = formatDetailsWithPrefixes(details)
 	return res
 }
 
@@ -260,10 +430,15 @@ func CheckCaptivePortal(verbose bool) Result {
 
 	res := Result{Name: "Captive Portal", Emoji: "🍎", Latency: dur, Status: StatusOk}
 	if verbose {
-		res.Details = append(res.Details, "Response Status: "+resp.Status)
+		var details []string
+		safeStatus := reSanitizeHTTP.ReplaceAllString(resp.Status, "")
+		details = append(details, "Response Status: "+safeStatus)
 		for k, v := range resp.Header {
-			res.Details = append(res.Details, k+": "+strings.Join(v, ", "))
+			safeK := reSanitizeHTTP.ReplaceAllString(k, "")
+			safeV := reSanitizeHTTP.ReplaceAllString(strings.Join(v, ", "), "")
+			details = append(details, safeK+": "+safeV)
 		}
+		res.Details = formatDetailsWithPrefixes(details)
 	}
 
 	lr := io.LimitReader(resp.Body, 1024)
@@ -285,8 +460,7 @@ func getPrimaryInterface() (string, error) {
 }
 
 func parseInterface(output string) (string, error) {
-	re := regexp.MustCompile(`interface: (\w+)`)
-	m := re.FindStringSubmatch(output)
+	m := reRouteIface.FindStringSubmatch(output)
 	if len(m) > 1 {
 		return m[1], nil
 	}
@@ -302,8 +476,7 @@ func getGatewayIP() (string, error) {
 }
 
 func parseGateway(output string) (string, error) {
-	re := regexp.MustCompile(`gateway: (\d+\.\d+\.\d+\.\d+)`)
-	m := re.FindStringSubmatch(output)
+	m := reRouteGw.FindStringSubmatch(output)
 	if len(m) > 1 {
 		return m[1], nil
 	}
@@ -313,7 +486,7 @@ func parseGateway(output string) (string, error) {
 func ping(ip string) (time.Duration, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ping", "-c", "1", "-t", "1", ip)
+	cmd := exec.CommandContext(ctx, "ping", "-c", "1", ip)
 	out, err := cmd.Output()
 	if err != nil {
 		return 0, err
@@ -322,26 +495,162 @@ func ping(ip string) (time.Duration, error) {
 }
 
 func parsePing(output string) (time.Duration, error) {
-	re := regexp.MustCompile(`min/avg/max/stddev = [\d\.]+/([\d\.]+)`)
-	m := re.FindStringSubmatch(output)
+	m := rePingStat.FindStringSubmatch(output)
 	if len(m) > 1 {
-		avg, _ := strconv.ParseFloat(m[1], 64)
+		avg, err := strconv.ParseFloat(m[1], 64)
+		if err != nil {
+			return 0, fmt.Errorf("failed to parse avg latency from '%s': %w", m[1], err)
+		}
 		return time.Duration(avg * float64(time.Millisecond)), nil
 	}
 	return 0, fmt.Errorf("failed to parse ping metrics")
 }
 
-// CheckL3WAN verifies WAN backbone reachability.
-func CheckL3WAN() Result {
-	target := "1.1.1.1"
-	lat, err := ping(target)
+// ping6 executes an IPv6 ping command.
+func ping6(ip string) (time.Duration, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ping6", "-c", "1", ip)
+	out, err := cmd.Output()
 	if err != nil {
-		return Result{Name: "WAN Reachability", Emoji: "🌐", Status: StatusError, Message: "Internet backbone unreachable"}
+		return 0, err
 	}
-	res := Result{Name: "Internet (" + target + ")", Emoji: "🌐", Latency: lat, Status: StatusOk, Message: "Routing operational"}
-	if lat > 150*time.Millisecond {
+	return parsePing(string(out))
+}
+
+// tcpPing attempts to establish a TCP connection to the specified address.
+func tcpPing(address string) (time.Duration, error) {
+	start := time.Now()
+	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
+	if err != nil {
+		return 0, err
+	}
+	if errClose := conn.Close(); errClose != nil {
+		log.Printf("diagnostic: could not close tcpPing connection: %v", errClose)
+	}
+	return time.Since(start), nil
+}
+
+// MeasureLossAndJitter performs a 5-packet ping with 0.2s interval to calculate loss and jitter.
+func MeasureLossAndJitter(ip string, isIPv6 bool) (float64, float64, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmdName := "ping"
+	if isIPv6 {
+		cmdName = "ping6"
+	}
+
+	cmd := exec.CommandContext(ctx, cmdName, "-c", "5", "-i", "0.2", ip)
+	out, err := cmd.Output()
+	// Ignore errors like exit status 68 if some packets drop, we still parse the output
+	if err != nil && len(out) == 0 {
+		return 0, 0, err
+	}
+
+	output := string(out)
+
+	lossStr := "0"
+	if m := reLoss.FindStringSubmatch(output); len(m) > 1 {
+		lossStr = m[1]
+	}
+
+	jitterStr := "0.0"
+	if m := reJitter.FindStringSubmatch(output); len(m) > 1 {
+		jitterStr = m[1]
+	}
+
+	loss, err := strconv.ParseFloat(lossStr, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to parse loss: %w", err)
+	}
+	jitter, err := strconv.ParseFloat(jitterStr, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to parse jitter: %w", err)
+	}
+
+	return loss, jitter, nil
+}
+
+// CheckL3WAN verifies WAN backbone reachability across IPv4, IPv6, and TCP.
+func CheckL3WAN() Result {
+	var wg sync.WaitGroup
+	var latIPv4, latIPv6, latTCP time.Duration
+	var errIPv4, errIPv6, errTCP error
+	var loss, jitter float64
+	var errQoS error
+
+	wg.Add(4)
+	go func() { defer wg.Done(); latIPv4, errIPv4 = ping(wanTargetIPv4) }()
+	go func() { defer wg.Done(); latIPv6, errIPv6 = ping6(wanTargetIPv6) }()
+	go func() { defer wg.Done(); latTCP, errTCP = tcpPing(wanTargetTCP) }()
+	var qosProto = "IPv4"
+	go func() {
+		defer wg.Done()
+		loss, jitter, errQoS = MeasureLossAndJitter(wanTargetIPv4, false)
+		if errQoS != nil || loss == 100 {
+			// Fallback conditionally to IPv6 if IPv4 is impaired
+			lossIPv6, jitterIPv6, errQoSV6 := MeasureLossAndJitter(wanTargetIPv6, true)
+			if errQoSV6 == nil && lossIPv6 < 100 {
+				loss, jitter, errQoS = lossIPv6, jitterIPv6, errQoSV6
+				qosProto = "IPv6"
+			}
+		}
+	}()
+	wg.Wait()
+
+	res := Result{Name: "Internet Reachability", Emoji: "🌐", Status: StatusOk}
+
+	// Overall Status Determination
+	if errIPv4 != nil && errTCP != nil {
+		res.Status = StatusError
+		res.Message = "Offline (Both ICMP and TCP failed)"
+	} else if errIPv4 != nil && errTCP == nil {
+		res.Message = "Firewalled ICMP detected"
+		res.Latency = latTCP
+	} else {
+		res.Message = "Routing operational"
+		res.Latency = latIPv4
+	}
+
+	if res.Latency > 150*time.Millisecond {
 		res.Status = StatusWarning
 		res.Message = "High WAN latency"
 	}
+
+	// Format Details
+	var details []string
+	var ipv4Status string
+	if errIPv4 == nil {
+		ipv4Status = fmt.Sprintf("%v (Reachable)", latIPv4.Round(time.Millisecond))
+	} else if errTCP == nil {
+		ipv4Status = "TIMEOUT (Dropped)"
+	} else {
+		ipv4Status = "TIMEOUT (Unreachable)"
+	}
+	details = append(details, fmt.Sprintf("IPv4 (%s): %s", wanTargetIPv4, ipv4Status))
+
+	ipv6Status := "TIMEOUT (Unreachable)"
+	if errIPv6 == nil {
+		ipv6Status = fmt.Sprintf("%v (Reachable)", latIPv6.Round(time.Millisecond))
+	}
+	details = append(details, fmt.Sprintf("IPv6 (%s): %s", wanTargetIPv6, ipv6Status))
+
+	var tcpStatus string
+	if errTCP == nil {
+		tcpStatus = fmt.Sprintf("%v (Connected)", latTCP.Round(time.Millisecond))
+	} else {
+		tcpStatus = "TIMEOUT (Failed)"
+	}
+	details = append(details, fmt.Sprintf("TCP 443 (%s): %s", wanTargetIPv4, tcpStatus))
+
+	if errQoS == nil {
+		details = append(details, fmt.Sprintf("Quality (%s): Loss: %.1f%%, Jitter: %.2fms", qosProto, loss, jitter))
+	} else {
+		details = append(details, "Quality: Measurement failed or timed out")
+	}
+
+	res.Details = formatDetailsWithPrefixes(details)
+
 	return res
 }

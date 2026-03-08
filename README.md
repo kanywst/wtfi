@@ -38,10 +38,23 @@ No more `ping 8.8.8.8`. No more clicking through system preferences.
 🚀 wtfi: Starting Network Diagnostics...
 --------------------------------------------------
 📡 Wi-Fi (Starbucks_Guest)                      OK
+   ├─ Info: Interface: en0, Signal: -54 dBm
+   └─ MTU: 1500 (Standard is 1500)
+🛣️ Routing Table & VPNs                         OK
+   ├─ Info: Virtual interfaces detected
+   ├─ Default Route: en0 (Gateway: 10.0.0.1)
+   └─ VPN/Tailscale (utun3): Active (100.64.0.1)
 🏠 Gateway (10.0.0.1)                          4ms
-🌐 Internet (1.1.1.1)                          6ms
+   └─ Info: Reachable
+🌐 Internet Reachability                       6ms
+   ├─ IPv4 (1.1.1.1): 6ms (Reachable)
+   ├─ IPv6 (2606:4700:4700::1111): TIMEOUT (Unreachable)
+   ├─ TCP 443 (1.1.1.1): 5ms (Connected)
+   └─ Quality: Loss: 0.0%, Jitter: 1.25ms
 🚦 DNS Benchmark                               2ms
+   └─ Info: Fast and healthy
 🛡️ iCloud Private Relay                        1ms
+   └─ Info: Active (Apple Proxy Node detected)
 📍 Fast Trace                                   OK
 🍎 Captive Portal                            ERROR
    ├─ Info: Login Required (Captive Portal detected)
@@ -94,18 +107,22 @@ wtfi -w
 
 ## The Diagnostic Pipeline
 
-1. **Wi-Fi (L2):** Uses `system_profiler` for accurate RSSI, Noise, and SSID,
-   bypassing deprecated tools.
-2. **Gateway (L3):** Automatically resolves your default route and executes
+1. **Wi-Fi (L2):** Uses `system_profiler` for accurate RSSI, Noise, SSID, and
+   extracts MTU size to detect fragmentation risks.
+2. **Routing & VPNs (L3):** Parses the local routing table to detect
+   split-tunneling issues with Tailscale (`utun`), VPNs, or Docker bridges.
+3. **Gateway (L3):** Automatically resolves your default route and executes
    high-precision ICMP pings.
-3. **Internet Backbone (L3):** Verifies WAN exit via Cloudflare (`1.1.1.1`).
-4. **DNS Benchmark (L7):** Races your system DNS against Google and Cloudflare
-   to detect slow resolution or hijacking.
-5. **iCloud Private Relay:** Detects if macOS is routing traffic through Apple's
-   proxy nodes.
-6. **Fast Trace:** Concurrent UDP mapping of your hop-by-hop route to the
-   internet.
-7. **Captive Portal (L7):** Checks Apple's hotspot-detect endpoint with
+4. **Internet Reachability (L3/L4):** Concurrent IPv4, IPv6, and TCP 443
+   checks to uncover asymmetric blackholing or ICMP firewalls. Includes a
+   background 5-packet Loss & Jitter measurement.
+5. **DNS Benchmark (L7):** Races your system DNS against Google and
+   Cloudflare to detect slow resolution or hijacking.
+6. **iCloud Private Relay:** Detects if macOS is routing traffic through
+   Apple's proxy nodes.
+7. **Fast Trace:** Concurrent ICMP mapping of your hop-by-hop route to
+   the internet.
+8. **Captive Portal (L7):** Checks Apple's hotspot-detect endpoint with
    memory-safe `io.LimitReader`.
 
 ---
@@ -119,8 +136,3 @@ git clone https://github.com/kanywst/wtfi.git
 # Run the quality pipeline
 make fmt lint test build
 ```
-
----
-
-Built with rage by someone whose internet cut out one too many times.
-MIT License. 2026.
