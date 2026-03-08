@@ -1,6 +1,6 @@
 # Binaries
 bin/
-wtfi
+/wtfi
 
 # Test binary
 *.test
