@@ -40,6 +40,12 @@ const (
 	StatusError
 )
 
+const (
+	wanTargetIPv4 = "1.1.1.1"
+	wanTargetIPv6 = "2606:4700:4700::1111"
+	wanTargetTCP  = "1.1.1.1:443"
+)
+
 // Result holds the outcome of a diagnostic check.
 type Result struct {
 	Name    string
@@ -180,7 +186,7 @@ func CheckL3Gateway(verbose bool) Result {
 }
 
 // CheckRoutingTable checks active network routing and Virtual Networks (VPNs/Docker).
-func CheckRoutingTable(verbose bool) Result {
+func CheckRoutingTable() Result {
 	res := Result{Name: "Routing Table & VPNs", Emoji: "🛣️", Status: StatusOk}
 
 	// Get default route
@@ -504,10 +510,6 @@ func MeasureLossAndJitter(ip string) (float64, float64, error) {
 
 // CheckL3WAN verifies WAN backbone reachability across IPv4, IPv6, and TCP.
 func CheckL3WAN() Result {
-	targetIPv4 := "1.1.1.1"
-	targetIPv6 := "2606:4700:4700::1111"
-	targetTCP := "1.1.1.1:443"
-
 	var wg sync.WaitGroup
 	var latIPv4, latIPv6, latTCP time.Duration
 	var errIPv4, errIPv6, errTCP error
@@ -515,10 +517,10 @@ func CheckL3WAN() Result {
 	var errQoS error
 
 	wg.Add(4)
-	go func() { defer wg.Done(); latIPv4, errIPv4 = ping(targetIPv4) }()
-	go func() { defer wg.Done(); latIPv6, errIPv6 = ping6(targetIPv6) }()
-	go func() { defer wg.Done(); latTCP, errTCP = tcpPing(targetTCP) }()
-	go func() { defer wg.Done(); loss, jitter, errQoS = MeasureLossAndJitter(targetIPv4) }()
+	go func() { defer wg.Done(); latIPv4, errIPv4 = ping(wanTargetIPv4) }()
+	go func() { defer wg.Done(); latIPv6, errIPv6 = ping6(wanTargetIPv6) }()
+	go func() { defer wg.Done(); latTCP, errTCP = tcpPing(wanTargetTCP) }()
+	go func() { defer wg.Done(); loss, jitter, errQoS = MeasureLossAndJitter(wanTargetIPv4) }()
 	wg.Wait()
 
 	res := Result{Name: "Internet Reachability", Emoji: "🌐", Status: StatusOk}
@@ -550,13 +552,13 @@ func CheckL3WAN() Result {
 	} else {
 		ipv4Status = "TIMEOUT (Unreachable)"
 	}
-	details = append(details, fmt.Sprintf("IPv4 (%s): %s", targetIPv4, ipv4Status))
+	details = append(details, fmt.Sprintf("IPv4 (%s): %s", wanTargetIPv4, ipv4Status))
 
 	ipv6Status := "TIMEOUT (Unreachable)"
 	if errIPv6 == nil {
 		ipv6Status = fmt.Sprintf("%v (Reachable)", latIPv6.Round(time.Millisecond))
 	}
-	details = append(details, fmt.Sprintf("IPv6 (%s): %s", targetIPv6, ipv6Status))
+	details = append(details, fmt.Sprintf("IPv6 (%s): %s", wanTargetIPv6, ipv6Status))
 
 	var tcpStatus string
 	if errTCP == nil {
@@ -564,7 +566,7 @@ func CheckL3WAN() Result {
 	} else {
 		tcpStatus = "TIMEOUT (Failed)"
 	}
-	details = append(details, fmt.Sprintf("TCP 443 (%s): %s", targetIPv4, tcpStatus))
+	details = append(details, fmt.Sprintf("TCP 443 (%s): %s", wanTargetIPv4, tcpStatus))
 
 	if errQoS == nil {
 		details = append(details, fmt.Sprintf("Quality: Loss: %.1f%%, Jitter: %.2fms", loss, jitter))

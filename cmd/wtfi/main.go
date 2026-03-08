@@ -35,7 +35,7 @@ func main() {
 		// Refactor: Use closures only when necessary.
 		steps := []func() diagnostic.Result{
 			func() diagnostic.Result { return diagnostic.CheckL2WiFi(*verbose) },
-			func() diagnostic.Result { return diagnostic.CheckRoutingTable(*verbose) },
+			diagnostic.CheckRoutingTable,
 			func() diagnostic.Result { return diagnostic.CheckL3Gateway(*verbose) },
 			diagnostic.CheckL3WAN,
 			diagnostic.CheckDNSBenchmark,
