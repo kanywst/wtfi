@@ -17,14 +17,15 @@ import (
 )
 
 var (
-	reSignalNoise = regexp.MustCompile(`(-?\d+) dBm / (-?\d+) dBm`)
-	reMTU         = regexp.MustCompile(`mtu (\d+)`)
-	rePingStat    = regexp.MustCompile(`min/avg/max/std-?dev = \d+(?:\.\d*)?/(\d+(?:\.\d*)?)`)
-	rePingRoute   = regexp.MustCompile(`from (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):`)
-	reRouteIface  = regexp.MustCompile(`interface: (\w+)`)
-	reRouteGw     = regexp.MustCompile(`gateway: (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})`)
-	reLoss        = regexp.MustCompile(`(\d+\.?\d*)% packet loss`)
-	reJitter      = regexp.MustCompile(`min/avg/max/std-?dev = \d+(?:\.\d*)?/\d+(?:\.\d*)?/\d+(?:\.\d*)?/(\d+(?:\.\d*)?)`)
+	reSignalNoise  = regexp.MustCompile(`(-?\d+) dBm / (-?\d+) dBm`)
+	reMTU          = regexp.MustCompile(`mtu (\d+)`)
+	rePingStat     = regexp.MustCompile(`min/avg/max/std-?dev = \d+(?:\.\d*)?/(\d+(?:\.\d*)?)`)
+	rePingRoute    = regexp.MustCompile(`from (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):`)
+	reRouteIface   = regexp.MustCompile(`interface: (\w+)`)
+	reRouteGw      = regexp.MustCompile(`gateway: (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})`)
+	reLoss         = regexp.MustCompile(`(\d+\.?\d*)% packet loss`)
+	reJitter       = regexp.MustCompile(`min/avg/max/std-?dev = \d+(?:\.\d*)?/\d+(?:\.\d*)?/\d+(?:\.\d*)?/(\d+(?:\.\d*)?)`)
+	reSanitizeHTTP = regexp.MustCompile(`[\x00-\x1F\x7F-\x9F]`)
 )
 
 // Status represents the health status of a diagnostic step.
@@ -76,7 +77,6 @@ func CheckL2WiFi(verbose bool) Result {
 func parseWiFiInfo(output string, iface string, verbose bool) Result {
 	res := Result{Name: "Wi-Fi", Emoji: "📡", Status: StatusOk}
 	ssid, rssi := "", 0
-	mtu := ""
 	var details []string
 
 	lines := strings.Split(output, "\n")
@@ -120,8 +120,7 @@ func parseWiFiInfo(output string, iface string, verbose bool) Result {
 	outIf, err := exec.Command("ifconfig", iface).Output()
 	if err == nil {
 		if m := reMTU.FindStringSubmatch(string(outIf)); len(m) > 1 {
-			mtu = m[1]
-			allDetails = append(allDetails, fmt.Sprintf("MTU: %s (Standard is 1500)", mtu))
+			allDetails = append(allDetails, fmt.Sprintf("MTU: %s (Standard is 1500)", m[1]))
 		}
 	}
 
@@ -236,11 +235,13 @@ func CheckRoutingTable() Result {
 					for _, addr := range addrs {
 						if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
 							if ipnet.IP.To4() != nil {
+								var kind string
 								if strings.HasPrefix(ifaceObj.Name, "utun") {
-									virtuals = append(virtuals, fmt.Sprintf("VPN/Tailscale (%s): Active (%s)", ifaceObj.Name, ipnet.IP.String()))
+									kind = "VPN/Tailscale"
 								} else {
-									virtuals = append(virtuals, fmt.Sprintf("Bridge/Docker (%s): Active (%s)", ifaceObj.Name, ipnet.IP.String()))
+									kind = "Bridge/Docker"
 								}
+								virtuals = append(virtuals, fmt.Sprintf("%s (%s): Active (%s)", kind, ifaceObj.Name, ipnet.IP.String()))
 								break // Only show first IPv4 for brevity
 							}
 						}
@@ -395,9 +396,12 @@ func CheckCaptivePortal(verbose bool) Result {
 	res := Result{Name: "Captive Portal", Emoji: "🍎", Latency: dur, Status: StatusOk}
 	if verbose {
 		var details []string
-		details = append(details, "Response Status: "+resp.Status)
+		safeStatus := reSanitizeHTTP.ReplaceAllString(resp.Status, "")
+		details = append(details, "Response Status: "+safeStatus)
 		for k, v := range resp.Header {
-			details = append(details, k+": "+strings.Join(v, ", "))
+			safeK := reSanitizeHTTP.ReplaceAllString(k, "")
+			safeV := reSanitizeHTTP.ReplaceAllString(strings.Join(v, ", "), "")
+			details = append(details, safeK+": "+safeV)
 		}
 		res.Details = formatDetailsWithPrefixes(details)
 	}
