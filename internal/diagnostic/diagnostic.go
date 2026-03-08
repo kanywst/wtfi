@@ -241,6 +241,10 @@ func CheckRoutingTable() Result {
 				kind = "VPN/Tailscale"
 			case strings.HasPrefix(ifaceObj.Name, "bridge"):
 				kind = "Bridge/Docker"
+			case strings.HasPrefix(ifaceObj.Name, "wg"):
+				kind = "VPN/WireGuard"
+			case strings.HasPrefix(ifaceObj.Name, "tun"):
+				kind = "VPN/OpenVPN"
 			default:
 				continue
 			}
@@ -388,12 +392,10 @@ func FastTraceroute(verbose bool) Result {
 		wg.Add(1)
 		go func(ttl int) {
 			defer wg.Done()
-			out, err := exec.Command("ping", "-c", "1", "-t", strconv.Itoa(ttl), "-o", target).Output()
-			if err == nil {
-				m := rePingRoute.FindStringSubmatch(string(out))
-				if len(m) > 1 {
-					hops[ttl] = fmt.Sprintf("Hop %2d: %s", ttl, m[1])
-				}
+			out, _ := exec.Command("ping", "-c", "1", "-t", strconv.Itoa(ttl), "-o", target).Output()
+			m := rePingRoute.FindStringSubmatch(string(out))
+			if len(m) > 1 {
+				hops[ttl] = fmt.Sprintf("Hop %2d: %s", ttl, m[1])
 			} else {
 				hops[ttl] = fmt.Sprintf("Hop %2d: * (Request timed out)", ttl)
 			}
@@ -530,11 +532,16 @@ func tcpPing(address string) (time.Duration, error) {
 }
 
 // MeasureLossAndJitter performs a 5-packet ping with 0.2s interval to calculate loss and jitter.
-func MeasureLossAndJitter(ip string) (float64, float64, error) {
+func MeasureLossAndJitter(ip string, isIPv6 bool) (float64, float64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "ping", "-c", "5", "-i", "0.2", ip)
+	cmdName := "ping"
+	if isIPv6 {
+		cmdName = "ping6"
+	}
+
+	cmd := exec.CommandContext(ctx, cmdName, "-c", "5", "-i", "0.2", ip)
 	out, err := cmd.Output()
 	// Ignore errors like exit status 68 if some packets drop, we still parse the output
 	if err != nil && len(out) == 0 {
@@ -577,7 +584,17 @@ func CheckL3WAN() Result {
 	go func() { defer wg.Done(); latIPv4, errIPv4 = ping(wanTargetIPv4) }()
 	go func() { defer wg.Done(); latIPv6, errIPv6 = ping6(wanTargetIPv6) }()
 	go func() { defer wg.Done(); latTCP, errTCP = tcpPing(wanTargetTCP) }()
-	go func() { defer wg.Done(); loss, jitter, errQoS = MeasureLossAndJitter(wanTargetIPv4) }()
+	go func() {
+		defer wg.Done()
+		loss, jitter, errQoS = MeasureLossAndJitter(wanTargetIPv4, false)
+		if errQoS != nil || loss == 100 {
+			// Fallback conditionally to IPv6 if IPv4 is impaired
+			lossIPv6, jitterIPv6, errQoSV6 := MeasureLossAndJitter(wanTargetIPv6, true)
+			if errQoSV6 == nil && lossIPv6 < 100 {
+				loss, jitter, errQoS = lossIPv6, jitterIPv6, errQoSV6
+			}
+		}
+	}()
 	wg.Wait()
 
 	res := Result{Name: "Internet Reachability", Emoji: "🌐", Status: StatusOk}
