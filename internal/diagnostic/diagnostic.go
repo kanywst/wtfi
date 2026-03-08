@@ -236,11 +236,12 @@ func CheckRoutingTable() Result {
 	} else {
 		for _, ifaceObj := range interfaces {
 			var kind string
-			if strings.HasPrefix(ifaceObj.Name, "utun") {
+			switch {
+			case strings.HasPrefix(ifaceObj.Name, "utun"):
 				kind = "VPN/Tailscale"
-			} else if strings.HasPrefix(ifaceObj.Name, "bridge") {
+			case strings.HasPrefix(ifaceObj.Name, "bridge"):
 				kind = "Bridge/Docker"
-			} else {
+			default:
 				continue
 			}
 
