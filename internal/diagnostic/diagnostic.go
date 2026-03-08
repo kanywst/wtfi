@@ -147,7 +147,7 @@ func formatDetailsWithPrefixes(details []string) []string {
 		if i == len(details)-1 {
 			prefix = "└─"
 		}
-		formatted[i] = fmt.Sprintf("%s %s", prefix, detail)
+		formatted[i] = fmt.Sprintf("%s %s", prefix, reSanitizeHTTP.ReplaceAllString(detail, ""))
 	}
 	return formatted
 }
@@ -226,48 +226,52 @@ func CheckRoutingTable() Result {
 		log.Printf("diagnostic: could not get interfaces: %v", errNet)
 	} else {
 		for _, ifaceObj := range interfaces {
-			if strings.HasPrefix(ifaceObj.Name, "utun") || strings.HasPrefix(ifaceObj.Name, "bridge") {
-				// Only show if it's "up"
-				if (ifaceObj.Flags & net.FlagUp) != 0 {
-					addrs, errAddrs := ifaceObj.Addrs()
-					if errAddrs != nil {
-						log.Printf("diagnostic: could not get addresses for interface %s: %v", ifaceObj.Name, errAddrs)
-						continue
-					}
-					var ipStr string
-					// Find first IPv4 and IPv6 address in a single pass
-					var ipv4, ipv6 string
-					for _, addr := range addrs {
-						if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-							if ipv4 != "" && ipv6 != "" {
-								break // Found both, no need to continue
-							}
-							if ipnet.IP.To4() != nil {
-								if ipv4 == "" {
-									ipv4 = ipnet.IP.String()
-								}
-							} else if ipv6 == "" {
-								ipv6 = ipnet.IP.String()
-							}
-						}
-					}
+			var kind string
+			if strings.HasPrefix(ifaceObj.Name, "utun") {
+				kind = "VPN/Tailscale"
+			} else if strings.HasPrefix(ifaceObj.Name, "bridge") {
+				kind = "Bridge/Docker"
+			} else {
+				continue
+			}
 
-					if ipv4 != "" {
-						ipStr = ipv4 // Prefer IPv4 for brevity
-					} else {
-						ipStr = ipv6
-					}
+			// Only show if it's "up"
+			if (ifaceObj.Flags & net.FlagUp) == 0 {
+				continue
+			}
 
-					if ipStr != "" {
-						var kind string
-						if strings.HasPrefix(ifaceObj.Name, "utun") {
-							kind = "VPN/Tailscale"
-						} else {
-							kind = "Bridge/Docker"
+			addrs, errAddrs := ifaceObj.Addrs()
+			if errAddrs != nil {
+				log.Printf("diagnostic: could not get addresses for interface %s: %v", ifaceObj.Name, errAddrs)
+				continue
+			}
+
+			var ipStr string
+			// Find first IPv4 and IPv6 address in a single pass
+			var ipv4, ipv6 string
+			for _, addr := range addrs {
+				if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+					if ipv4 != "" && ipv6 != "" {
+						break // Found both, no need to continue
+					}
+					if ipnet.IP.To4() != nil {
+						if ipv4 == "" {
+							ipv4 = ipnet.IP.String()
 						}
-						virtuals = append(virtuals, fmt.Sprintf("%s (%s): Active (%s)", kind, ifaceObj.Name, ipStr))
+					} else if ipv6 == "" {
+						ipv6 = ipnet.IP.String()
 					}
 				}
+			}
+
+			if ipv4 != "" {
+				ipStr = ipv4 // Prefer IPv4 for brevity
+			} else {
+				ipStr = ipv6
+			}
+
+			if ipStr != "" {
+				virtuals = append(virtuals, fmt.Sprintf("%s (%s): Active (%s)", kind, ifaceObj.Name, ipStr))
 			}
 		}
 	}
