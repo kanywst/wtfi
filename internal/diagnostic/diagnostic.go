@@ -118,7 +118,9 @@ func parseWiFiInfo(output string, iface string, verbose bool) Result {
 
 	// Extract MTU size
 	outIf, err := exec.Command("ifconfig", iface).Output()
-	if err == nil {
+	if err != nil {
+		allDetails = append(allDetails, fmt.Sprintf("MTU: unavailable (%v)", err))
+	} else {
 		if m := reMTU.FindStringSubmatch(string(outIf)); len(m) > 1 {
 			allDetails = append(allDetails, fmt.Sprintf("MTU: %s (Standard is 1500)", m[1]))
 		}
@@ -233,21 +235,27 @@ func CheckRoutingTable() Result {
 						continue
 					}
 					var ipStr string
-					// First pass for IPv4 for brevity
+					// Find first IPv4 and IPv6 address in a single pass
+					var ipv4, ipv6 string
 					for _, addr := range addrs {
-						if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
-							ipStr = ipnet.IP.String()
-							break
-						}
-					}
-					// If no IPv4, fallback to the first available IPv6
-					if ipStr == "" {
-						for _, addr := range addrs {
-							if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To16() != nil {
-								ipStr = ipnet.IP.String()
-								break
+						if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+							if ipv4 != "" && ipv6 != "" {
+								break // Found both, no need to continue
+							}
+							if ipnet.IP.To4() != nil {
+								if ipv4 == "" {
+									ipv4 = ipnet.IP.String()
+								}
+							} else if ipv6 == "" {
+								ipv6 = ipnet.IP.String()
 							}
 						}
+					}
+
+					if ipv4 != "" {
+						ipStr = ipv4 // Prefer IPv4 for brevity
+					} else {
+						ipStr = ipv6
 					}
 
 					if ipStr != "" {
