@@ -260,13 +260,10 @@ func CheckRoutingTable() Result {
 		}
 	}
 
-	routePrefix := "├─"
-	if len(virtuals) == 0 {
-		routePrefix = "└─"
-	}
-	res.Details = append(res.Details, fmt.Sprintf("%s Default Route: %s (Gateway: %s)", routePrefix, iface, gwStr))
-
-	res.Details = append(res.Details, formatDetailsWithPrefixes(virtuals)...)
+	var details []string
+	details = append(details, fmt.Sprintf("Default Route: %s (Gateway: %s)", iface, gwStr))
+	details = append(details, virtuals...)
+	res.Details = append(res.Details, formatDetailsWithPrefixes(details)...)
 
 	if len(res.Details) > 1 {
 		res.Message = "Virtual interfaces detected"
