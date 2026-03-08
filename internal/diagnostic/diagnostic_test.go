@@ -69,3 +69,29 @@ func TestParseWiFiInfo(t *testing.T) {
 		t.Error("Expected details in verbose mode, got none")
 	}
 }
+
+func TestParseGateway(t *testing.T) {
+	output := `   route to: default
+destination: default
+       mask: default
+    gateway: 192.168.1.254
+  interface: en0
+      flags: <UP,GATEWAY,DONE,STATIC,PRCLONING,GLOBAL>
+ recvpipe  sendpipe  ssthresh  rtt,msec    rttvar  hopcount      mtu     expire
+       0         0         0         0         0         0      1500         0 `
+	gw, err := parseGateway(output)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	if gw != "192.168.1.254" {
+		t.Errorf("Expected 192.168.1.254, got %s", gw)
+	}
+}
+
+func TestParsePingError(t *testing.T) {
+	output := `ping: cannot resolve 1.1.1.1: Unknown host`
+	_, err := parsePing(output)
+	if err == nil {
+		t.Fatal("Expected error, got nil")
+	}
+}

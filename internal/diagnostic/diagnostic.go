@@ -90,7 +90,11 @@ func parseWiFiInfo(output string, iface string, verbose bool) Result {
 		}
 	}
 
-	res.Message = fmt.Sprintf("Interface: %s, Signal: %d dBm", iface, rssi)
+	if rssi == 0 {
+		res.Message = "Wired connection (or Wi-Fi disabled)"
+	} else {
+		res.Message = fmt.Sprintf("Interface: %s, Signal: %d dBm", iface, rssi)
+	}
 	res.Details = details
 	if rssi < -80 && rssi != 0 {
 		res.Status = StatusWarning
@@ -107,7 +111,7 @@ func CheckL3Gateway(verbose bool) Result {
 	}
 
 	lat, err := ping(gw)
-	res := Result{Name: "Gateway (" + gw + ")", Emoji: "🏠", Latency: lat, Status: StatusOk}
+	res := Result{Name: "Gateway (" + gw + ")", Emoji: "🏠", Latency: lat, Status: StatusOk, Message: "Reachable"}
 	if err != nil {
 		res.Status = StatusError
 		res.Message = "Unreachable"
@@ -172,10 +176,12 @@ func CheckDNSBenchmark() Result {
 	}
 
 	res.Details = details
-	if res.Latency > 300*time.Millisecond {
+	if res.Latency > 200*time.Millisecond {
 		res.Status = StatusWarning
 		res.Message = "High DNS latency detected"
 		res.Fix = "Switch to a faster DNS provider like Cloudflare (1.1.1.1)."
+	} else {
+		res.Message = "Fast and healthy"
 	}
 	return res
 }
@@ -332,7 +338,7 @@ func CheckL3WAN() Result {
 	if err != nil {
 		return Result{Name: "WAN Reachability", Emoji: "🌐", Status: StatusError, Message: "Internet backbone unreachable"}
 	}
-	res := Result{Name: "Internet (" + target + ")", Emoji: "🌐", Latency: lat, Status: StatusOk}
+	res := Result{Name: "Internet (" + target + ")", Emoji: "🌐", Latency: lat, Status: StatusOk, Message: "Routing operational"}
 	if lat > 150*time.Millisecond {
 		res.Status = StatusWarning
 		res.Message = "High WAN latency"
