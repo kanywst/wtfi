@@ -17,14 +17,15 @@ import (
 )
 
 var (
-	reSignalNoise = regexp.MustCompile(`(-?\d+) dBm / (-?\d+) dBm`)
-	reMTU         = regexp.MustCompile(`mtu (\d+)`)
-	rePingStat    = regexp.MustCompile(`min/avg/max/std-?dev = \d+(?:\.\d*)?/(\d+(?:\.\d*)?)`)
-	rePingRoute   = regexp.MustCompile(`from (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):`)
-	reRouteIface  = regexp.MustCompile(`interface: (\w+)`)
-	reRouteGw     = regexp.MustCompile(`gateway: (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})`)
-	reLoss        = regexp.MustCompile(`(\d+\.?\d*)% packet loss`)
-	reJitter      = regexp.MustCompile(`min/avg/max/std-?dev = \d+(?:\.\d*)?/\d+(?:\.\d*)?/\d+(?:\.\d*)?/(\d+(?:\.\d*)?)`)
+	reSignalNoise   = regexp.MustCompile(`(-?\d+) dBm / (-?\d+) dBm`)
+	reMTU           = regexp.MustCompile(`mtu (\d+)`)
+	rePingStat      = regexp.MustCompile(`min/avg/max/std-?dev = \d+(?:\.\d*)?/(\d+(?:\.\d*)?)`)
+	rePingRoute     = regexp.MustCompile(`from (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):`)
+	reRouteIface    = regexp.MustCompile(`interface: (\w+)`)
+	reRouteGw       = regexp.MustCompile(`gateway: (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})`)
+	reLoss          = regexp.MustCompile(`(\d+\.?\d*)% packet loss`)
+	reJitter        = regexp.MustCompile(`min/avg/max/std-?dev = \d+(?:\.\d*)?/\d+(?:\.\d*)?/\d+(?:\.\d*)?/(\d+(?:\.\d*)?)`)
+	reSanitizeIface = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 )
 
 // Status represents the health status of a diagnostic step.
@@ -203,11 +204,15 @@ func CheckRoutingTable(verbose bool) Result {
 		virtuals = append(virtuals, "Info: Virtual interface check failed")
 	} else {
 		for _, ifaceObj := range interfaces {
-			name := ifaceObj.Name
+			name := reSanitizeIface.ReplaceAllString(ifaceObj.Name, "")
 			if strings.HasPrefix(name, "utun") || strings.HasPrefix(name, "bridge") {
 				// Only show if it's "up"
 				if (ifaceObj.Flags & net.FlagUp) != 0 {
-					addrs, _ := ifaceObj.Addrs()
+					addrs, errAddrs := ifaceObj.Addrs()
+					if errAddrs != nil {
+						log.Printf("diagnostic: could not get addresses for interface %s: %v", name, errAddrs)
+						continue
+					}
 					for _, addr := range addrs {
 						if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
 							if ipnet.IP.To4() != nil {
