@@ -90,7 +90,7 @@ func parseWiFiInfo(output string, iface string, verbose bool) Result {
 		if isCurrent {
 			if strings.HasSuffix(trimmed, ":") && ssid == "" {
 				ssid = strings.TrimSuffix(trimmed, ":")
-				res.Name = fmt.Sprintf("Wi-Fi (%s)", ssid)
+				res.Name = fmt.Sprintf("Wi-Fi (%s)", reSanitizeHTTP.ReplaceAllString(ssid, ""))
 			}
 			if strings.Contains(line, "Signal / Noise") {
 				m := reSignalNoise.FindStringSubmatch(line)
@@ -392,7 +392,7 @@ func FastTraceroute(verbose bool) Result {
 		wg.Add(1)
 		go func(ttl int) {
 			defer wg.Done()
-			out, _ := exec.Command("ping", "-c", "1", "-t", strconv.Itoa(ttl), "-o", target).Output()
+			out, _ := exec.Command("ping", "-c", "1", "-t", strconv.Itoa(ttl), target).Output()
 			m := rePingRoute.FindStringSubmatch(string(out))
 			if len(m) > 1 {
 				hops[ttl] = fmt.Sprintf("Hop %2d: %s", ttl, m[1])
@@ -584,6 +584,7 @@ func CheckL3WAN() Result {
 	go func() { defer wg.Done(); latIPv4, errIPv4 = ping(wanTargetIPv4) }()
 	go func() { defer wg.Done(); latIPv6, errIPv6 = ping6(wanTargetIPv6) }()
 	go func() { defer wg.Done(); latTCP, errTCP = tcpPing(wanTargetTCP) }()
+	var qosProto = "IPv4"
 	go func() {
 		defer wg.Done()
 		loss, jitter, errQoS = MeasureLossAndJitter(wanTargetIPv4, false)
@@ -592,6 +593,7 @@ func CheckL3WAN() Result {
 			lossIPv6, jitterIPv6, errQoSV6 := MeasureLossAndJitter(wanTargetIPv6, true)
 			if errQoSV6 == nil && lossIPv6 < 100 {
 				loss, jitter, errQoS = lossIPv6, jitterIPv6, errQoSV6
+				qosProto = "IPv6"
 			}
 		}
 	}()
@@ -643,7 +645,7 @@ func CheckL3WAN() Result {
 	details = append(details, fmt.Sprintf("TCP 443 (%s): %s", wanTargetIPv4, tcpStatus))
 
 	if errQoS == nil {
-		details = append(details, fmt.Sprintf("Quality: Loss: %.1f%%, Jitter: %.2fms", loss, jitter))
+		details = append(details, fmt.Sprintf("Quality (%s): Loss: %.1f%%, Jitter: %.2fms", qosProto, loss, jitter))
 	} else {
 		details = append(details, "Quality: Measurement failed or timed out")
 	}
