@@ -209,7 +209,8 @@ func CheckRoutingTable() Result {
 	var virtuals []string
 	interfaces, errNet := net.Interfaces()
 	if errNet != nil {
-		virtuals = append(virtuals, "Info: Virtual interface check failed")
+		res.Status = StatusWarning
+		log.Printf("diagnostic: could not get interfaces: %v", errNet)
 	} else {
 		for _, ifaceObj := range interfaces {
 			name := reSanitizeIface.ReplaceAllString(ifaceObj.Name, "")
