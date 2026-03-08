@@ -191,7 +191,9 @@ func CheckRoutingTable(verbose bool) Result {
 	// Get active VPNs and Bridges
 	var virtuals []string
 	out, errCmd := exec.Command("ifconfig").Output()
-	if errCmd == nil {
+	if errCmd != nil {
+		virtuals = append(virtuals, "Info: Virtual interface check failed")
+	} else {
 		lines := strings.Split(string(out), "\n")
 
 		var currentIface string
@@ -405,7 +407,7 @@ func parseGateway(output string) (string, error) {
 func ping(ip string) (time.Duration, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ping", "-c", "1", "-t", "1", ip)
+	cmd := exec.CommandContext(ctx, "ping", "-c", "1", ip)
 	out, err := cmd.Output()
 	if err != nil {
 		return 0, err
