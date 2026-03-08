@@ -17,15 +17,14 @@ import (
 )
 
 var (
-	reSignalNoise   = regexp.MustCompile(`(-?\d+) dBm / (-?\d+) dBm`)
-	reMTU           = regexp.MustCompile(`mtu (\d+)`)
-	rePingStat      = regexp.MustCompile(`min/avg/max/std-?dev = \d+(?:\.\d*)?/(\d+(?:\.\d*)?)`)
-	rePingRoute     = regexp.MustCompile(`from (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):`)
-	reRouteIface    = regexp.MustCompile(`interface: (\w+)`)
-	reRouteGw       = regexp.MustCompile(`gateway: (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})`)
-	reLoss          = regexp.MustCompile(`(\d+\.?\d*)% packet loss`)
-	reJitter        = regexp.MustCompile(`min/avg/max/std-?dev = \d+(?:\.\d*)?/\d+(?:\.\d*)?/\d+(?:\.\d*)?/(\d+(?:\.\d*)?)`)
-	reSanitizeIface = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+	reSignalNoise = regexp.MustCompile(`(-?\d+) dBm / (-?\d+) dBm`)
+	reMTU         = regexp.MustCompile(`mtu (\d+)`)
+	rePingStat    = regexp.MustCompile(`min/avg/max/std-?dev = \d+(?:\.\d*)?/(\d+(?:\.\d*)?)`)
+	rePingRoute   = regexp.MustCompile(`from (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):`)
+	reRouteIface  = regexp.MustCompile(`interface: (\w+)`)
+	reRouteGw     = regexp.MustCompile(`gateway: (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})`)
+	reLoss        = regexp.MustCompile(`(\d+\.?\d*)% packet loss`)
+	reJitter      = regexp.MustCompile(`min/avg/max/std-?dev = \d+(?:\.\d*)?/\d+(?:\.\d*)?/\d+(?:\.\d*)?/(\d+(?:\.\d*)?)`)
 )
 
 // Status represents the health status of a diagnostic step.
@@ -213,19 +212,18 @@ func CheckRoutingTable() Result {
 		log.Printf("diagnostic: could not get interfaces: %v", errNet)
 	} else {
 		for _, ifaceObj := range interfaces {
-			name := reSanitizeIface.ReplaceAllString(ifaceObj.Name, "")
-			if strings.HasPrefix(name, "utun") || strings.HasPrefix(name, "bridge") {
+			if strings.HasPrefix(ifaceObj.Name, "utun") || strings.HasPrefix(ifaceObj.Name, "bridge") {
 				// Only show if it's "up"
 				if (ifaceObj.Flags & net.FlagUp) != 0 {
 					addrs, errAddrs := ifaceObj.Addrs()
 					if errAddrs != nil {
-						log.Printf("diagnostic: could not get addresses for interface %s: %v", name, errAddrs)
+						log.Printf("diagnostic: could not get addresses for interface %s: %v", ifaceObj.Name, errAddrs)
 						continue
 					}
 					for _, addr := range addrs {
 						if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
 							if ipnet.IP.To4() != nil {
-								if strings.HasPrefix(name, "utun") {
+								if strings.HasPrefix(ifaceObj.Name, "utun") {
 									virtuals = append(virtuals, fmt.Sprintf("VPN/Tailscale (%s): Active (%s)", ifaceObj.Name, ipnet.IP.String()))
 								} else {
 									virtuals = append(virtuals, fmt.Sprintf("Bridge/Docker (%s): Active (%s)", ifaceObj.Name, ipnet.IP.String()))
